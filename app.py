@@ -339,6 +339,13 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if self.path == "/api/data":
+            if not self.is_authenticated():
+                self.send_json(403, {"error": "로그인 후 조회할 수 있습니다."})
+                return
+            self.send_json(200, CURRENT_UPLOAD)
+            return
+
         if self.path.startswith("/assets/"):
             target = (ROOT / self.path.lstrip("/")).resolve()
             assets_root = (ROOT / "assets").resolve()
@@ -355,7 +362,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         html = (ROOT / "index.html").read_text(encoding="utf-8")
-        visible_upload = CURRENT_UPLOAD if self.is_authenticated() else empty_upload(message="로그인 후 조회할 수 있습니다.")
+        token = session_from_cookie(self.headers.get("Cookie"))
+        if token:
+            SESSIONS.pop(token, None)
+        visible_upload = empty_upload(message="로그인 후 조회할 수 있습니다.")
         payload = json.dumps(visible_upload, ensure_ascii=False).replace("</", "<\\/")
         initial_data = f"<script>window.__INITIAL_UPLOAD__ = {payload};</script>\n"
         app_script_marker = "<script>\n    const state"
@@ -367,6 +377,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Set-Cookie", "admin_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")
         self.end_headers()
         self.wfile.write(data)
 

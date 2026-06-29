@@ -851,6 +851,15 @@
       setAuthMode(payload.authenticated, payload.admin);
     }
 
+    async function loadServerData() {
+      const response = await fetch("/api/data");
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || "데이터를 불러오지 못했습니다.");
+      }
+      loadRowsFromPayload(payload);
+    }
+
     function openModal(modal) {
       modal.classList.add("open");
     }
@@ -982,7 +991,28 @@
       csrfToken.value = state.csrf;
       panel.classList.add("loading");
       statusText.textContent = "엑셀 파일을 서버로 보내는 중입니다.";
-      document.getElementById("uploadForm").submit();
+      const formData = new FormData();
+      formData.append("file", file);
+      fetch("/api/upload", {
+        method: "POST",
+        headers: { "X-CSRF-Token": state.csrf },
+        body: formData
+      })
+        .then(async (response) => {
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || "엑셀 파일을 읽지 못했습니다.");
+          loadRowsFromPayload({ ...payload, fileName: file.name });
+        })
+        .catch((error) => {
+          clearCurrentData("");
+          notice.textContent = `파일을 읽는 중 오류가 발생했습니다. ${error.message}`;
+          notice.style.display = "block";
+          statusText.textContent = "업로드 실패";
+        })
+        .finally(() => {
+          panel.classList.remove("loading");
+          fileInput.value = "";
+        });
     }
 
     function openEdit(rowId) {
@@ -1078,8 +1108,8 @@
         }
         state.csrf = payload.csrf || "";
         setAuthMode(true, Boolean(payload.admin));
+        await loadServerData();
         closeModal(loginModal);
-        window.setTimeout(() => window.location.reload(), 150);
       } catch (error) {
         loginError.textContent = "서버에 연결하지 못했습니다. 페이지를 새로고침한 뒤 다시 로그인해 주세요.";
       } finally {
