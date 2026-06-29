@@ -1,0 +1,1080 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>보험 수수료 조회</title>
+  <style>
+    :root {
+      --point: #DAAD41;
+      --point-dark: #b98d25;
+      --ink: #111111;
+      --muted: #6b7280;
+      --line: #e5e7eb;
+      --white: #ffffff;
+      --shadow: 0 12px 32px rgba(17, 17, 17, 0.06);
+      --danger: #b42318;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Malgun Gothic", "Apple SD Gothic Neo", Arial, sans-serif;
+      color: var(--ink);
+      background: var(--white);
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .page {
+      min-height: 100vh;
+      background: var(--white);
+    }
+
+    .app-header {
+      height: 96px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 22px 28px 18px;
+      background: var(--white);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      min-width: 260px;
+    }
+
+    .brand-logo {
+      display: block;
+      width: 254px;
+      height: auto;
+    }
+
+    .header-actions {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #3f3f3f;
+    }
+
+    .login-badge {
+      display: none;
+      min-height: 28px;
+      align-items: center;
+      padding: 0 10px;
+      border: 1px solid rgba(218, 173, 65, 0.5);
+      border-radius: 999px;
+      background: rgba(218, 173, 65, 0.12);
+      color: var(--point-dark);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    body.auth-mode .login-badge {
+      display: inline-flex;
+    }
+
+    .user-button {
+      width: 42px;
+      height: 42px;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      position: relative;
+    }
+
+    .user-button::before {
+      content: "";
+      position: absolute;
+      top: 5px;
+      left: 14px;
+      width: 14px;
+      height: 14px;
+      background: currentColor;
+      border-radius: 50%;
+    }
+
+    .user-button::after {
+      content: "";
+      position: absolute;
+      left: 8px;
+      bottom: 6px;
+      width: 26px;
+      height: 14px;
+      background: currentColor;
+      border-radius: 14px 14px 2px 2px;
+    }
+
+    .user-button.admin {
+      color: var(--point-dark);
+    }
+
+    .user-menu {
+      position: absolute;
+      top: 50px;
+      right: 0;
+      min-width: 180px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--white);
+      box-shadow: var(--shadow);
+      display: none;
+      z-index: 20;
+    }
+
+    .user-menu.open {
+      display: block;
+    }
+
+    .user-menu button,
+    .user-menu div {
+      width: 100%;
+      min-height: 36px;
+      padding: 8px 10px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      text-align: left;
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .user-menu button:hover {
+      background: #fff8e8;
+    }
+
+    .admin-chip {
+      color: var(--point-dark);
+      font-weight: 800;
+    }
+
+    .hero-space {
+      height: clamp(40px, 8vh, 90px);
+    }
+
+    .content {
+      width: min(1180px, calc(100% - 48px));
+      margin: 0 auto 48px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--white);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .control-bar {
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) 170px 170px auto;
+      gap: 10px;
+      align-items: center;
+      padding: 18px;
+      border-top: 4px solid var(--point);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .search-wrap {
+      position: relative;
+    }
+
+    .search-wrap::before {
+      content: "";
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      width: 13px;
+      height: 13px;
+      border: 2px solid var(--point);
+      border-radius: 50%;
+      transform: translateY(-58%);
+    }
+
+    .search-wrap::after {
+      content: "";
+      position: absolute;
+      left: 27px;
+      top: 25px;
+      width: 8px;
+      height: 2px;
+      background: var(--point);
+      transform: rotate(45deg);
+      transform-origin: left center;
+    }
+
+    input,
+    select {
+      width: 100%;
+      height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--white);
+      color: var(--ink);
+      font-size: 14px;
+      outline: none;
+    }
+
+    input:focus,
+    select:focus {
+      border-color: var(--point);
+      box-shadow: 0 0 0 3px rgba(218, 173, 65, 0.18);
+    }
+
+    .search-wrap input {
+      padding: 0 14px 0 44px;
+    }
+
+    select {
+      padding: 0 12px;
+    }
+
+    .upload-label,
+    .primary-button {
+      height: 44px;
+      min-width: 132px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 16px;
+      border-radius: 4px;
+      border: 1px solid var(--point);
+      background: var(--point);
+      color: var(--white);
+      font-weight: 800;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .upload-label:hover,
+    .primary-button:hover {
+      background: var(--point-dark);
+      border-color: var(--point-dark);
+    }
+
+    .upload-form {
+      display: none;
+    }
+
+    body.admin-mode .upload-form {
+      display: block;
+    }
+
+    .secondary-button {
+      height: 40px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--white);
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    input[type="file"] {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      border-bottom: 1px solid var(--line);
+      background: #fcfcfc;
+    }
+
+    .metric {
+      padding: 16px 18px;
+      border-right: 1px solid var(--line);
+    }
+
+    .metric:last-child {
+      border-right: 0;
+    }
+
+    .metric span {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .metric strong {
+      display: block;
+      min-height: 27px;
+      font-size: 22px;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+    }
+
+    .status {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 18px;
+      color: var(--muted);
+      font-size: 13px;
+      background: var(--white);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .status strong {
+      color: var(--point-dark);
+    }
+
+    .notice {
+      margin: 14px 0 0;
+      padding: 12px 14px;
+      border-radius: 4px;
+      border: 1px solid rgba(218, 173, 65, 0.45);
+      background: rgba(218, 173, 65, 0.09);
+      color: #79570c;
+      font-size: 14px;
+      display: none;
+    }
+
+    .table-scroll {
+      overflow: auto;
+      max-height: 520px;
+      min-height: 330px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 14px;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      padding: 12px;
+      text-align: left;
+      color: #222;
+      background: #f8f4ea;
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap;
+    }
+
+    th,
+    td {
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+
+    tbody tr:hover {
+      background: #fffaf0;
+    }
+
+    td.num,
+    th.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    td.product {
+      min-width: 360px;
+      max-width: 620px;
+      line-height: 1.45;
+    }
+
+    td.company {
+      min-width: 130px;
+      white-space: nowrap;
+      font-weight: 800;
+    }
+
+    td.sheet {
+      min-width: 160px;
+      color: var(--muted);
+    }
+
+    .admin-col {
+      display: none;
+      width: 126px;
+      min-width: 126px;
+      text-align: right;
+    }
+
+    body.admin-mode .admin-col {
+      display: table-cell;
+    }
+
+    .row-actions {
+      display: flex;
+      gap: 6px;
+      justify-content: flex-end;
+    }
+
+    .small-button {
+      min-height: 30px;
+      padding: 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--white);
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .small-button:hover {
+      border-color: var(--point);
+      color: var(--point-dark);
+    }
+
+    .small-button.danger {
+      color: var(--danger);
+    }
+
+    .empty {
+      min-height: 330px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      color: var(--muted);
+      padding: 32px;
+    }
+
+    .empty strong {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--ink);
+      font-size: 18px;
+    }
+
+    .loading {
+      pointer-events: none;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(17, 17, 17, 0.35);
+      z-index: 50;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .modal {
+      width: min(480px, 100%);
+      border-radius: 8px;
+      background: var(--white);
+      box-shadow: 0 20px 60px rgba(17, 17, 17, 0.22);
+      overflow: hidden;
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 18px;
+      border-top: 4px solid var(--point);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .modal-header strong {
+      font-size: 18px;
+    }
+
+    .close-button {
+      width: 32px;
+      height: 32px;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .modal-body {
+      padding: 18px;
+    }
+
+    .form-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .form-grid.two {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    label.field {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    label.field input {
+      color: var(--ink);
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .error-text {
+      min-height: 18px;
+      margin-top: 10px;
+      color: var(--danger);
+      font-size: 13px;
+    }
+
+    @media (max-width: 920px) {
+      .app-header {
+        height: auto;
+        align-items: flex-start;
+        padding: 18px;
+      }
+
+      .brand-logo {
+        width: 226px;
+      }
+
+      .hero-space {
+        height: 28px;
+      }
+
+      .control-bar {
+        grid-template-columns: 1fr;
+      }
+
+      .summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .metric:nth-child(2) {
+        border-right: 0;
+      }
+
+      .metric:nth-child(-n + 2) {
+        border-bottom: 1px solid var(--line);
+      }
+    }
+
+    @media (max-width: 560px) {
+      .content {
+        width: calc(100% - 24px);
+      }
+
+      .brand-logo {
+        width: 202px;
+      }
+
+      .summary {
+        grid-template-columns: 1fr;
+      }
+
+      .metric,
+      .metric:nth-child(2) {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .metric:last-child {
+        border-bottom: 0;
+      }
+
+      .status {
+        display: block;
+      }
+
+      .status span {
+        display: block;
+        margin-top: 6px;
+      }
+
+      td.product {
+        min-width: 280px;
+      }
+
+      .form-grid.two {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="app-header">
+      <div class="brand" aria-label="한국보험금융">
+        <img class="brand-logo" src="assets/kif-logo.png" alt="한국보험금융 KOREA INSURANCE & FINANCE">
+      </div>
+      <div class="header-actions">
+        <span id="loginBadge" class="login-badge">로그인됨</span>
+        <button id="userButton" class="user-button" type="button" aria-label="사용자 메뉴"></button>
+        <div id="userMenu" class="user-menu">
+          <div id="adminStatus">로그인 필요</div>
+          <button id="loginMenuButton" type="button">로그인</button>
+          <button id="logoutMenuButton" type="button" hidden>로그아웃</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="hero-space"></div>
+
+    <main class="content">
+      <section class="panel" aria-label="수수료 조회">
+        <div class="control-bar">
+          <div class="search-wrap">
+            <input id="searchInput" type="search" placeholder="회사명 또는 상품명 검색" autocomplete="off">
+          </div>
+          <select id="companyFilter"><option value="">전체 회사</option></select>
+          <select id="sourceFilter"><option value="">전체 구분</option></select>
+          <form id="uploadForm" class="upload-form" action="/upload" method="post" enctype="multipart/form-data">
+            <label class="upload-label" for="fileInput">엑셀 업로드</label>
+            <input id="csrfToken" name="csrf" type="hidden">
+            <input id="fileInput" name="file" type="file" accept=".xlsx,.xlsm,.xltx,.xltm">
+          </form>
+        </div>
+
+        <div class="summary">
+          <div class="metric"><span>표시 행</span><strong id="rowCount">0</strong></div>
+          <div class="metric"><span>회사 수</span><strong id="companyCount">0</strong></div>
+          <div class="metric"><span>상품 수</span><strong id="productCount">0</strong></div>
+          <div class="metric"><span>총수수료 합계</span><strong id="grandTotal">0</strong></div>
+        </div>
+
+        <div class="status">
+          <div id="statusText">파일을 업로드하면 표가 표시됩니다.</div>
+          <span id="fileName">선택된 파일 없음</span>
+        </div>
+
+        <div class="table-scroll">
+          <table id="resultTable">
+            <thead>
+              <tr>
+                <th>회사</th>
+                <th>상품</th>
+                <th class="num">1차년</th>
+                <th class="num">2차년</th>
+                <th class="num">3차년</th>
+                <th class="num">총수수료</th>
+                <th>구분</th>
+                <th class="admin-col">관리</th>
+              </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+          </table>
+          <div id="emptyState" class="empty">
+            <div>
+              <strong>로그인 후 조회할 수 있습니다</strong>
+              안내받은 회사 계정으로 로그인하면 수수료 표가 표시됩니다.
+            </div>
+          </div>
+        </div>
+      </section>
+      <div id="notice" class="notice"></div>
+    </main>
+  </div>
+
+  <div id="loginModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="관리자 로그인">
+    <div class="modal">
+      <div class="modal-header">
+        <strong>관리자 로그인</strong>
+        <button class="close-button" type="button" data-close="loginModal" aria-label="닫기">&times;</button>
+      </div>
+      <form id="loginForm" class="modal-body">
+        <div class="form-grid">
+          <label class="field">아이디<input id="adminId" autocomplete="username"></label>
+          <label class="field">비밀번호<input id="adminPassword" type="password" autocomplete="current-password"></label>
+        </div>
+        <div id="loginError" class="error-text"></div>
+        <div class="modal-actions">
+          <button class="secondary-button" type="button" data-close="loginModal">취소</button>
+          <button class="primary-button" type="submit">로그인</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="editModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="수수료 수정">
+    <div class="modal">
+      <div class="modal-header">
+        <strong>수수료 수정</strong>
+        <button class="close-button" type="button" data-close="editModal" aria-label="닫기">&times;</button>
+      </div>
+      <form id="editForm" class="modal-body">
+        <input id="editId" type="hidden">
+        <div class="form-grid">
+          <label class="field">회사<input id="editCompany" required></label>
+          <label class="field">상품<input id="editProduct" required></label>
+          <label class="field">구분<input id="editSource" required></label>
+        </div>
+        <div class="form-grid two" style="margin-top: 12px;">
+          <label class="field">1차년<input id="editYear1" type="number" step="0.001"></label>
+          <label class="field">2차년<input id="editYear2" type="number" step="0.001"></label>
+          <label class="field">3차년<input id="editYear3" type="number" step="0.001"></label>
+        </div>
+        <div class="modal-actions">
+          <button class="secondary-button" type="button" data-close="editModal">취소</button>
+          <button class="primary-button" type="submit">저장</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const state = { rows: [], filtered: [], fileName: "", authenticated: false, admin: false, csrf: "" };
+    let nextRowId = 1;
+
+    const fileInput = document.getElementById("fileInput");
+    const csrfToken = document.getElementById("csrfToken");
+    const searchInput = document.getElementById("searchInput");
+    const companyFilter = document.getElementById("companyFilter");
+    const sourceFilter = document.getElementById("sourceFilter");
+    const tableBody = document.getElementById("tableBody");
+    const emptyState = document.getElementById("emptyState");
+    const notice = document.getElementById("notice");
+    const fileName = document.getElementById("fileName");
+    const statusText = document.getElementById("statusText");
+    const panel = document.querySelector(".panel");
+    const userButton = document.getElementById("userButton");
+    const userMenu = document.getElementById("userMenu");
+    const adminStatus = document.getElementById("adminStatus");
+    const loginMenuButton = document.getElementById("loginMenuButton");
+    const logoutMenuButton = document.getElementById("logoutMenuButton");
+    const loginModal = document.getElementById("loginModal");
+    const editModal = document.getElementById("editModal");
+    const loginForm = document.getElementById("loginForm");
+    const editForm = document.getElementById("editForm");
+    const loginError = document.getElementById("loginError");
+
+    const text = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
+    const number = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
+
+    const formatNumber = (value) => {
+      const num = number(value);
+      if (Math.abs(num) < 100 && !Number.isInteger(num)) {
+        return num.toLocaleString("ko-KR", { maximumFractionDigits: 3 });
+      }
+      return num.toLocaleString("ko-KR", { maximumFractionDigits: 0 });
+    };
+
+    function escapeHtml(value) {
+      return text(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function setAuthMode(isAuthenticated, isAdmin) {
+      state.authenticated = Boolean(isAuthenticated);
+      state.admin = Boolean(isAdmin);
+      if (!state.authenticated) {
+        state.csrf = "";
+      }
+      csrfToken.value = state.csrf;
+      document.body.classList.toggle("auth-mode", state.authenticated);
+      document.body.classList.toggle("admin-mode", state.admin);
+      userButton.classList.toggle("admin", state.admin);
+      adminStatus.innerHTML = state.admin
+        ? '<span class="admin-chip">관리자 모드</span>'
+        : state.authenticated
+          ? "조회 모드"
+          : "로그인 필요";
+      loginMenuButton.hidden = state.authenticated;
+      logoutMenuButton.hidden = !state.authenticated;
+      render();
+    }
+
+    async function loadSession() {
+      const response = await fetch("/api/session");
+      const payload = await response.json();
+      state.csrf = payload.csrf || "";
+      setAuthMode(payload.authenticated, payload.admin);
+    }
+
+    function openModal(modal) {
+      modal.classList.add("open");
+    }
+
+    function closeModal(modal) {
+      modal.classList.remove("open");
+    }
+
+    function rebuildFilters(rows) {
+      const currentCompany = companyFilter.value;
+      const currentSource = sourceFilter.value;
+      const companies = [...new Set(rows.map((row) => row.company))].sort((a, b) => a.localeCompare(b, "ko"));
+      const sources = [...new Set(rows.map((row) => row.source))].sort((a, b) => a.localeCompare(b, "ko"));
+      companyFilter.innerHTML = '<option value="">전체 회사</option>' + companies.map((value) => `<option>${escapeHtml(value)}</option>`).join("");
+      sourceFilter.innerHTML = '<option value="">전체 구분</option>' + sources.map((value) => `<option>${escapeHtml(value)}</option>`).join("");
+      if (companies.includes(currentCompany)) companyFilter.value = currentCompany;
+      if (sources.includes(currentSource)) sourceFilter.value = currentSource;
+    }
+
+    function applyFilters() {
+      const query = searchInput.value.trim().toLowerCase();
+      const company = companyFilter.value;
+      const source = sourceFilter.value;
+      state.filtered = state.rows.filter((row) => {
+        const matchesQuery = !query || `${row.company} ${row.product}`.toLowerCase().includes(query);
+        const matchesCompany = !company || row.company === company;
+        const matchesSource = !source || row.source === source;
+        return matchesQuery && matchesCompany && matchesSource;
+      });
+      render();
+    }
+
+    function render() {
+      tableBody.innerHTML = state.filtered.map((row) => `
+        <tr>
+          <td class="company">${escapeHtml(row.company)}</td>
+          <td class="product">${escapeHtml(row.product)}</td>
+          <td class="num">${formatNumber(row.year1)}</td>
+          <td class="num">${formatNumber(row.year2)}</td>
+          <td class="num">${formatNumber(row.year3)}</td>
+          <td class="num"><strong>${formatNumber(row.total)}</strong></td>
+          <td class="sheet">${escapeHtml(row.source)}</td>
+          <td class="admin-col">
+            ${state.admin ? `
+              <div class="row-actions">
+                <button class="small-button" type="button" data-action="edit" data-id="${row.id}">수정</button>
+                <button class="small-button danger" type="button" data-action="delete" data-id="${row.id}">삭제</button>
+              </div>
+            ` : ""}
+          </td>
+        </tr>
+      `).join("");
+
+      emptyState.style.display = state.filtered.length ? "none" : "grid";
+      document.getElementById("rowCount").textContent = state.filtered.length.toLocaleString("ko-KR");
+      document.getElementById("companyCount").textContent = new Set(state.filtered.map((row) => row.company)).size.toLocaleString("ko-KR");
+      document.getElementById("productCount").textContent = new Set(state.filtered.map((row) => row.product)).size.toLocaleString("ko-KR");
+      document.getElementById("grandTotal").textContent = formatNumber(state.filtered.reduce((sum, row) => sum + row.total, 0));
+
+      if (state.fileName && state.rows.length) {
+        statusText.innerHTML = `<strong>${state.filtered.length.toLocaleString("ko-KR")}</strong>건 표시 중${state.admin ? " · 관리자 수정 가능" : ""}`;
+      }
+    }
+
+    function clearCurrentData(nextFileName) {
+      state.rows = [];
+      state.filtered = [];
+      state.fileName = nextFileName || "";
+      nextRowId = 1;
+      fileName.textContent = nextFileName || "선택된 파일 없음";
+      searchInput.value = "";
+      companyFilter.innerHTML = '<option value="">전체 회사</option>';
+      sourceFilter.innerHTML = '<option value="">전체 구분</option>';
+      notice.style.display = "none";
+      statusText.textContent = nextFileName ? "새 파일을 읽는 중입니다." : "파일을 업로드하면 표가 표시됩니다.";
+      render();
+    }
+
+    function loadRowsFromPayload(payload) {
+      if (payload.error) {
+        throw new Error(payload.error);
+      }
+
+      nextRowId = 1;
+      state.rows = payload.rows.map((row) => ({ ...row, id: nextRowId++ })).sort((a, b) =>
+        a.company.localeCompare(b.company, "ko") ||
+        a.product.localeCompare(b.product, "ko") ||
+        a.source.localeCompare(b.source, "ko")
+      );
+      state.fileName = payload.fileName || "업로드된 엑셀 파일";
+      fileName.textContent = state.fileName;
+      rebuildFilters(state.rows);
+      applyFilters();
+
+      if (!state.rows.length) {
+        notice.textContent = payload.message || "인식 가능한 수수료 표를 찾지 못했습니다. 생보 예시표 또는 손보 원장 형식의 헤더가 포함된 파일인지 확인해 주세요.";
+        notice.style.display = "block";
+        statusText.textContent = "표시할 데이터가 없습니다.";
+      }
+    }
+
+    function loadInitialUpload() {
+      const payload = window.__INITIAL_UPLOAD__;
+      if (!payload) return;
+      if (payload.error) {
+        clearCurrentData("");
+        notice.textContent = `파일을 읽는 중 오류가 발생했습니다. ${payload.error}`;
+        notice.style.display = "block";
+        statusText.textContent = "업로드 실패";
+        return;
+      }
+      if (payload.rows && payload.rows.length) {
+        loadRowsFromPayload(payload);
+      } else if (payload.message) {
+        notice.textContent = payload.message;
+        notice.style.display = "block";
+      }
+    }
+
+    function handleFile(file) {
+      if (!state.admin) {
+        fileInput.value = "";
+        notice.textContent = "관리자 로그인 후 엑셀을 업로드할 수 있습니다.";
+        notice.style.display = "block";
+        return;
+      }
+      state.fileName = file.name;
+      fileName.textContent = file.name;
+      csrfToken.value = state.csrf;
+      panel.classList.add("loading");
+      statusText.textContent = "엑셀 파일을 서버로 보내는 중입니다.";
+      document.getElementById("uploadForm").submit();
+    }
+
+    function openEdit(rowId) {
+      if (!state.admin) return;
+      const row = state.rows.find((item) => item.id === rowId);
+      if (!row) return;
+      document.getElementById("editId").value = row.id;
+      document.getElementById("editCompany").value = row.company;
+      document.getElementById("editProduct").value = row.product;
+      document.getElementById("editSource").value = row.source;
+      document.getElementById("editYear1").value = row.year1;
+      document.getElementById("editYear2").value = row.year2;
+      document.getElementById("editYear3").value = row.year3;
+      openModal(editModal);
+    }
+
+    function deleteRow(rowId) {
+      if (!state.admin) return;
+      const row = state.rows.find((item) => item.id === rowId);
+      if (!row) return;
+      if (!confirm(`삭제하시겠습니까?\n${row.company} / ${row.product}`)) return;
+      state.rows = state.rows.filter((item) => item.id !== rowId);
+      rebuildFilters(state.rows);
+      applyFilters();
+    }
+
+    userButton.addEventListener("click", () => {
+      userMenu.classList.toggle("open");
+    });
+
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest(".header-actions")) userMenu.classList.remove("open");
+    });
+
+    loginMenuButton.addEventListener("click", () => {
+      userMenu.classList.remove("open");
+      loginError.textContent = "";
+      document.getElementById("adminId").value = "";
+      document.getElementById("adminPassword").value = "";
+      openModal(loginModal);
+      setTimeout(() => document.getElementById("adminId").focus(), 0);
+    });
+
+    logoutMenuButton.addEventListener("click", async () => {
+      await fetch("/api/logout", { method: "POST" });
+      userMenu.classList.remove("open");
+      window.location.reload();
+    });
+
+    loginForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      loginError.textContent = "";
+      const response = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: document.getElementById("adminId").value.trim(),
+          password: document.getElementById("adminPassword").value
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        loginError.textContent = payload.error || "로그인에 실패했습니다.";
+        return;
+      }
+      state.csrf = payload.csrf || "";
+      closeModal(loginModal);
+      window.location.reload();
+    });
+
+    editForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!state.admin) return;
+      const rowId = Number(document.getElementById("editId").value);
+      const row = state.rows.find((item) => item.id === rowId);
+      if (!row) return;
+      row.company = text(document.getElementById("editCompany").value);
+      row.product = text(document.getElementById("editProduct").value);
+      row.source = text(document.getElementById("editSource").value);
+      row.year1 = number(document.getElementById("editYear1").value);
+      row.year2 = number(document.getElementById("editYear2").value);
+      row.year3 = number(document.getElementById("editYear3").value);
+      row.total = row.year1 + row.year2 + row.year3;
+      rebuildFilters(state.rows);
+      applyFilters();
+      closeModal(editModal);
+    });
+
+    document.querySelectorAll("[data-close]").forEach((button) => {
+      button.addEventListener("click", () => closeModal(document.getElementById(button.dataset.close)));
+    });
+
+    document.querySelectorAll(".modal-backdrop").forEach((modal) => {
+      modal.addEventListener("click", (event) => {
+        if (event.target === modal) closeModal(modal);
+      });
+    });
+
+    tableBody.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-action]");
+      if (!button) return;
+      const rowId = Number(button.dataset.id);
+      if (button.dataset.action === "edit") openEdit(rowId);
+      if (button.dataset.action === "delete") deleteRow(rowId);
+    });
+
+    fileInput.addEventListener("click", () => {
+      fileInput.value = "";
+    });
+
+    fileInput.addEventListener("change", (event) => {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      handleFile(file);
+    });
+
+    searchInput.addEventListener("input", applyFilters);
+    companyFilter.addEventListener("change", applyFilters);
+    sourceFilter.addEventListener("change", applyFilters);
+
+    window.addEventListener("load", () => {
+      loadInitialUpload();
+      loadSession().catch(() => setAuthMode(false, false));
+      render();
+    });
+  </script>
+</body>
+</html>

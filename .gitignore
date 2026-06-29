@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+current_upload.json
+admin_password.txt
+.env
+*.log
