@@ -105,17 +105,9 @@ def is_percent_format(number_format: str | None) -> bool:
     return "%" in str(number_format or "")
 
 
-def percent_decimals(number_format: str | None) -> int:
-    section = str(number_format or "").split(";")[0]
-    match = re.search(r"[0#](?:\.([0#]+))?%", section)
-    return len(match.group(1) or "") if match else 1
-
-
-def format_percent(value: Any, decimals: int) -> str:
+def format_percent(value: Any) -> str:
     amount = num(value) * 100
-    text = f"{amount:.{max(decimals, 0)}f}"
-    if "." in text:
-        text = text.rstrip("0").rstrip(".")
+    text = f"{amount:.1f}"
     return f"{text}%"
 
 
@@ -130,7 +122,7 @@ def cell_display(cell: Any) -> str:
     if isinstance(value, str):
         return clean(value)
     if hasattr(cell, "number_format") and is_percent_format(cell.number_format):
-        return format_percent(value, percent_decimals(cell.number_format))
+        return format_percent(value)
     return ""
 
 
@@ -252,15 +244,14 @@ def parse_nonlife_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str
             cell = row[col] if col >= 0 and col < len(row) else 0
             item[key] += num(cell_value(cell))
             if hasattr(cell, "number_format") and is_percent_format(cell.number_format):
-                item[f"_{key}PercentDecimals"] = max(item.get(f"_{key}PercentDecimals", 0), percent_decimals(cell.number_format))
+                item[f"_{key}IsPercent"] = True
 
     result = []
     for item in grouped.values():
         item["total"] = item["year1"] + item["year2"] + item["year3"] + item.get("year4", 0.0)
         for key in ("year1", "year2", "year3", "year4"):
-            decimals = item.pop(f"_{key}PercentDecimals", None)
-            if decimals is not None:
-                item[f"{key}Display"] = format_percent(item[key], decimals)
+            if item.pop(f"_{key}IsPercent", False):
+                item[f"{key}Display"] = format_percent(item[key])
         result.append(item)
     return result
 
@@ -651,7 +642,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(403, {"error": "보안 토큰이 올바르지 않습니다. 새로고침 후 다시 시도해 주세요."})
                 return
             try:
-                length = int(self.headers.get("Content-Length", "0"))
                 body, content_type = self.read_upload_body()
                 file_bytes, _fields = parse_upload(body, content_type)
                 rows = parse_workbook(file_bytes)

@@ -337,37 +337,6 @@
       pointer-events: none;
     }
 
-    .summary {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      border-bottom: 1px solid var(--line);
-      background: #fcfcfc;
-    }
-
-    .metric {
-      padding: 16px 18px;
-      border-right: 1px solid var(--line);
-    }
-
-    .metric:last-child {
-      border-right: 0;
-    }
-
-    .metric span {
-      display: block;
-      margin-bottom: 7px;
-      color: var(--muted);
-      font-size: 13px;
-    }
-
-    .metric strong {
-      display: block;
-      min-height: 27px;
-      font-size: 22px;
-      line-height: 1.2;
-      overflow-wrap: anywhere;
-    }
-
     .status {
       display: flex;
       justify-content: space-between;
@@ -568,7 +537,7 @@
     }
 
     .modal.calculator {
-      width: min(920px, 100%);
+      width: min(760px, 100%);
     }
 
     .calc-head {
@@ -577,6 +546,33 @@
       gap: 12px;
       align-items: end;
       margin-bottom: 14px;
+    }
+
+    .calc-meta {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .calc-meta-row {
+      display: grid;
+      grid-template-columns: 82px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      min-height: 24px;
+    }
+
+    .calc-meta-row span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .calc-meta-row strong {
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
     }
 
     .calc-title {
@@ -601,16 +597,33 @@
       overflow: auto;
       border: 1px solid var(--line);
       border-radius: 6px;
+      background: #fff;
     }
 
     .calc-table {
-      min-width: 760px;
+      min-width: 640px;
       font-size: 13px;
     }
 
     .calc-table th,
     .calc-table td {
-      padding: 10px;
+      padding: 12px;
+      border-right: 1px solid var(--line);
+    }
+
+    .calc-table th:last-child,
+    .calc-table td:last-child {
+      border-right: 0;
+    }
+
+    .calc-table tbody tr:nth-child(odd) {
+      background: #fffdf8;
+    }
+
+    .calc-table .year-label {
+      width: 92px;
+      font-weight: 800;
+      color: #4b5563;
     }
 
     .calc-table tfoot td {
@@ -680,17 +693,6 @@
         grid-template-columns: 1fr;
       }
 
-      .summary {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .metric:nth-child(2) {
-        border-right: 0;
-      }
-
-      .metric:nth-child(-n + 2) {
-        border-bottom: 1px solid var(--line);
-      }
     }
 
     @media (max-width: 560px) {
@@ -700,20 +702,6 @@
 
       .brand-logo {
         width: 202px;
-      }
-
-      .summary {
-        grid-template-columns: 1fr;
-      }
-
-      .metric,
-      .metric:nth-child(2) {
-        border-right: 0;
-        border-bottom: 1px solid var(--line);
-      }
-
-      .metric:last-child {
-        border-bottom: 0;
       }
 
       .status {
@@ -778,13 +766,6 @@
             </select>
             <button id="clearUploadButton" class="danger-button" type="button">삭제</button>
           </div>
-        </div>
-
-        <div class="summary">
-          <div class="metric"><span>표시 행</span><strong id="rowCount">0</strong></div>
-          <div class="metric"><span>회사 수</span><strong id="companyCount">0</strong></div>
-          <div class="metric"><span>상품 수</span><strong id="productCount">0</strong></div>
-          <div class="metric"><span>총수수료 합계</span><strong id="grandTotal">0</strong></div>
         </div>
 
         <div class="status">
@@ -876,7 +857,7 @@
       </div>
       <div class="modal-body">
         <div class="calc-head">
-          <div id="calcTitle" class="calc-title"></div>
+          <div id="calcTitle" class="calc-meta"></div>
           <label class="field">금액<input id="calcAmount" inputmode="decimal" autocomplete="off"></label>
         </div>
         <div id="calcError" class="error-text"></div>
@@ -884,20 +865,9 @@
           <table class="calc-table">
             <thead>
               <tr>
-                <th>회사</th>
-                <th>상품</th>
-                <th class="num">입력 금액</th>
-                <th class="num">1차년 %</th>
-                <th class="num">1차년 계산 금액</th>
-                <th class="num">2차년 %</th>
-                <th class="num">2차년 계산 금액</th>
-                <th class="num">3차년 %</th>
-                <th class="num">3차년 계산 금액</th>
-                <th class="num">4차년 %</th>
-                <th class="num">4차년 계산 금액</th>
-                <th class="num">총 수수료 %</th>
-                <th class="num">총 수수료 계산 금액</th>
-                <th>구분</th>
+                <th>연차</th>
+                <th class="num">수수료율</th>
+                <th class="num">계산 금액</th>
               </tr>
             </thead>
             <tbody id="calcRows"></tbody>
@@ -950,7 +920,7 @@
     const formatNumber = (value) => {
       const num = number(value);
       if (Math.abs(num) < 100 && !Number.isInteger(num)) {
-        return num.toLocaleString("ko-KR", { maximumFractionDigits: 3 });
+        return num.toLocaleString("ko-KR", { maximumFractionDigits: 1 });
       }
       return num.toLocaleString("ko-KR", { maximumFractionDigits: 0 });
     };
@@ -960,7 +930,7 @@
 
     const formatPercentRate = (value) => {
       const rate = number(value) * 100;
-      return `${rate.toLocaleString("ko-KR", { maximumFractionDigits: 3 })}%`;
+      return `${rate.toLocaleString("ko-KR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
     };
 
     const hasPercentDisplay = (row) =>
@@ -1103,11 +1073,6 @@
       `).join("");
 
       emptyState.style.display = state.filtered.length ? "none" : "grid";
-      document.getElementById("rowCount").textContent = state.filtered.length.toLocaleString("ko-KR");
-      document.getElementById("companyCount").textContent = new Set(state.filtered.map((row) => row.company)).size.toLocaleString("ko-KR");
-      document.getElementById("productCount").textContent = new Set(state.filtered.map((row) => row.product)).size.toLocaleString("ko-KR");
-      document.getElementById("grandTotal").textContent = formatNumber(state.filtered.reduce((sum, row) => sum + row.total, 0));
-
       if (state.fileName && state.rows.length) {
         statusText.innerHTML = `<strong>${state.filtered.length.toLocaleString("ko-KR")}</strong>건 표시 중${state.admin ? " · 관리자 수정 가능" : ""}`;
       }
@@ -1245,22 +1210,18 @@
       const years = ["year1", "year2", "year3", "year4"];
       const calculated = Object.fromEntries(years.map((key) => [key, amount * number(activeCalcRow[key])]));
       const totalCalculated = years.reduce((sum, key) => sum + calculated[key], 0);
-      calcRows.innerHTML = `
+      const labels = { year1: "1차년", year2: "2차년", year3: "3차년", year4: "4차년" };
+      calcRows.innerHTML = years.map((key) => `
         <tr>
-          <td>${escapeHtml(activeCalcRow.company)}</td>
-          <td>${escapeHtml(activeCalcRow.product)}</td>
-          <td class="num">${hasAmount ? formatMoney(amount) : ""}</td>
-          <td class="num">${escapeHtml(rateText(activeCalcRow, "year1"))}</td>
-          <td class="num">${hasAmount ? formatMoney(calculated.year1) : ""}</td>
-          <td class="num">${escapeHtml(rateText(activeCalcRow, "year2"))}</td>
-          <td class="num">${hasAmount ? formatMoney(calculated.year2) : ""}</td>
-          <td class="num">${escapeHtml(rateText(activeCalcRow, "year3"))}</td>
-          <td class="num">${hasAmount ? formatMoney(calculated.year3) : ""}</td>
-          <td class="num">${escapeHtml(rateText(activeCalcRow, "year4"))}</td>
-          <td class="num">${hasAmount ? formatMoney(calculated.year4) : ""}</td>
-          <td class="num">${escapeHtml(formatCell(activeCalcRow, "total"))}</td>
-          <td class="num">${hasAmount ? formatMoney(totalCalculated) : ""}</td>
-          <td>${escapeHtml(activeCalcRow.source)}</td>
+          <td class="year-label">${labels[key]}</td>
+          <td class="num">${escapeHtml(rateText(activeCalcRow, key))}</td>
+          <td class="num">${hasAmount ? formatMoney(calculated[key]) : ""}</td>
+        </tr>
+      `).join("") + `
+        <tr>
+          <td class="year-label">총 수수료</td>
+          <td class="num"><strong>${escapeHtml(formatCell(activeCalcRow, "total"))}</strong></td>
+          <td class="num"><strong>${hasAmount ? formatMoney(totalCalculated) : ""}</strong></td>
         </tr>
       `;
       calcTotal.textContent = hasAmount ? `총 수수료 계산 금액 ${formatMoney(totalCalculated)}원` : "";
@@ -1270,7 +1231,11 @@
       const row = state.rows.find((item) => item.id === rowId);
       if (!row) return;
       activeCalcRow = row;
-      calcTitle.innerHTML = `<strong>${escapeHtml(row.company)} / ${escapeHtml(row.product)}</strong><span>${escapeHtml(row.source)}</span>`;
+      calcTitle.innerHTML = `
+        <div class="calc-meta-row"><span>회사</span><strong>${escapeHtml(row.company)}</strong></div>
+        <div class="calc-meta-row"><span>상품명</span><strong>${escapeHtml(row.product)}</strong></div>
+        <div class="calc-meta-row"><span>엑셀 시트</span><strong>${escapeHtml(row.source)}</strong></div>
+      `;
       calcAmount.value = "";
       calcError.textContent = "";
       renderCalculator();
