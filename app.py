@@ -30,6 +30,8 @@ VIEWER_LOGIN_IDS = {VIEWER_ID, "회사"}
 SESSION_SECONDS = 60 * 60 * 4
 MAX_LOGIN_FAILURES = 5
 LOCK_SECONDS = 60 * 5
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+MAX_JSON_BYTES = 64 * 1024
 SESSIONS: dict[str, dict[str, Any]] = {}
 LOGIN_FAILURES: dict[str, dict[str, Any]] = {}
 
@@ -99,8 +101,47 @@ def num(value: Any) -> float:
         return 0.0
 
 
+def is_percent_format(number_format: str | None) -> bool:
+    return "%" in str(number_format or "")
+
+
+def percent_decimals(number_format: str | None) -> int:
+    section = str(number_format or "").split(";")[0]
+    match = re.search(r"[0#](?:\.([0#]+))?%", section)
+    return len(match.group(1) or "") if match else 1
+
+
+def format_percent(value: Any, decimals: int) -> str:
+    amount = num(value) * 100
+    text = f"{amount:.{max(decimals, 0)}f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return f"{text}%"
+
+
+def cell_value(cell: Any) -> Any:
+    return cell.value if hasattr(cell, "value") else cell
+
+
+def cell_display(cell: Any) -> str:
+    value = cell_value(cell)
+    if value is None or value == "":
+        return ""
+    if isinstance(value, str):
+        return clean(value)
+    if hasattr(cell, "number_format") and is_percent_format(cell.number_format):
+        return format_percent(value, percent_decimals(cell.number_format))
+    return ""
+
+
+def display_for(row: list[Any], col: int) -> str:
+    if col < 0 or col >= len(row):
+        return ""
+    return cell_display(row[col])
+
+
 def find_col(row: list[Any], candidates: list[str]) -> int:
-    labels = [compact(cell) for cell in row]
+    labels = [compact(cell_value(cell)) for cell in row]
     for idx, label in enumerate(labels):
         if any(candidate in label for candidate in candidates):
             return idx
@@ -112,7 +153,7 @@ def find_year_col(rows: list[list[Any]], header_idx: int, candidates: list[str])
         if header_idx + offset >= len(rows):
             continue
         for idx, cell in enumerate(rows[header_idx + offset]):
-            label = compact(cell)
+            label = compact(cell_value(cell))
             if any(candidate in label for candidate in candidates):
                 return idx
     return -1
@@ -145,8 +186,8 @@ def parse_life_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, A
     parsed: list[dict[str, Any]] = []
     current_company = ""
     for row in rows[header_idx + 2 :]:
-        company_cell = clean(row[company_col] if company_col < len(row) else "")
-        product = clean(row[product_col] if product_col < len(row) else "")
+        company_cell = clean(cell_value(row[company_col]) if company_col < len(row) else "")
+        product = clean(cell_value(row[product_col]) if product_col < len(row) else "")
         if company_cell:
             current_company = company_cell
         company = company_cell or current_company
@@ -154,29 +195,32 @@ def parse_life_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, A
             continue
         if any(label in compact(product) for label in ["상품구분", "상품명"]):
             continue
-        year1 = num(row[y1_col] if y1_col < len(row) else 0)
-        year2 = num(row[y2_col] if y2_col < len(row) else 0)
-        year3 = num(row[y3_col] if y3_col < len(row) else 0)
-        year4 = num(row[y4_col] if y4_col >= 0 and y4_col < len(row) else 0)
-        parsed.append(
-            {
-                "company": company,
-                "product": product,
-                "year1": year1,
-                "year2": year2,
-                "year3": year3,
-                "year4": year4,
-                "total": year1 + year2 + year3 + year4,
-                "source": sheet_name,
-            }
-        )
+        year1 = num(cell_value(row[y1_col]) if y1_col < len(row) else 0)
+        year2 = num(cell_value(row[y2_col]) if y2_col < len(row) else 0)
+        year3 = num(cell_value(row[y3_col]) if y3_col < len(row) else 0)
+        year4 = num(cell_value(row[y4_col]) if y4_col >= 0 and y4_col < len(row) else 0)
+        item = {
+            "company": company,
+            "product": product,
+            "year1": year1,
+            "year2": year2,
+            "year3": year3,
+            "year4": year4,
+            "total": year1 + year2 + year3 + year4,
+            "source": sheet_name,
+        }
+        for key, col in (("year1", y1_col), ("year2", y2_col), ("year3", y3_col), ("year4", y4_col)):
+            display = display_for(row, col)
+            if display:
+                item[f"{key}Display"] = display
+        parsed.append(item)
     return parsed
 
 
 def parse_nonlife_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, Any]]:
     header_idx = -1
     for idx, row in enumerate(rows):
-        labels = [compact(cell) for cell in row]
+        labels = [compact(cell_value(cell)) for cell in row]
         if "보험사" in labels and "상품명" in labels and any("총환산" in label for label in labels):
             header_idx = idx
             break
@@ -195,8 +239,8 @@ def parse_nonlife_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str
 
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows[header_idx + 1 :]:
-        company = clean(row[company_col] if company_col < len(row) else "")
-        product = clean(row[product_col] if product_col < len(row) else "")
+        company = clean(cell_value(row[company_col]) if company_col < len(row) else "")
+        product = clean(cell_value(row[product_col]) if product_col < len(row) else "")
         if not company or not product:
             continue
         key = (company, product)
@@ -204,14 +248,19 @@ def parse_nonlife_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str
             key,
             {"company": company, "product": product, "year1": 0.0, "year2": 0.0, "year3": 0.0, "year4": 0.0, "source": f"{sheet_name} 합산"},
         )
-        item["year1"] += num(row[y1_col] if y1_col < len(row) else 0)
-        item["year2"] += num(row[y2_col] if y2_col < len(row) else 0)
-        item["year3"] += num(row[y3_col] if y3_col < len(row) else 0)
-        item["year4"] += num(row[y4_col] if y4_col >= 0 and y4_col < len(row) else 0)
+        for key, col in (("year1", y1_col), ("year2", y2_col), ("year3", y3_col), ("year4", y4_col)):
+            cell = row[col] if col >= 0 and col < len(row) else 0
+            item[key] += num(cell_value(cell))
+            if hasattr(cell, "number_format") and is_percent_format(cell.number_format):
+                item[f"_{key}PercentDecimals"] = max(item.get(f"_{key}PercentDecimals", 0), percent_decimals(cell.number_format))
 
     result = []
     for item in grouped.values():
         item["total"] = item["year1"] + item["year2"] + item["year3"] + item.get("year4", 0.0)
+        for key in ("year1", "year2", "year3", "year4"):
+            decimals = item.pop(f"_{key}PercentDecimals", None)
+            if decimals is not None:
+                item[f"{key}Display"] = format_percent(item[key], decimals)
         result.append(item)
     return result
 
@@ -221,7 +270,7 @@ def parse_monthly_matrix_sheet(rows: list[list[Any]], sheet_name: str) -> list[d
     month_cols: list[tuple[int, str]] = []
 
     for idx, row in enumerate(rows[:20]):
-        labels = [compact(cell) for cell in row]
+        labels = [compact(cell_value(cell)) for cell in row]
         candidate_cols = [col for col, label in enumerate(labels) if label == "월납"]
         if not candidate_cols:
             continue
@@ -230,7 +279,7 @@ def parse_monthly_matrix_sheet(rows: list[list[Any]], sheet_name: str) -> list[d
             company = ""
             for offset in range(col, max(-1, col - 3), -1):
                 if offset < len(company_row):
-                    company = clean(company_row[offset])
+                    company = clean(cell_value(company_row[offset]))
                     if company and company not in {"값", "보험사"}:
                         break
             if company and company not in {"값", "보험사"}:
@@ -247,41 +296,43 @@ def parse_monthly_matrix_sheet(rows: list[list[Any]], sheet_name: str) -> list[d
     dimension_cols = [
         col
         for col, cell in enumerate(rows[month_header_idx][:first_month_col])
-        if compact(cell) in dimension_names
+        if compact(cell_value(cell)) in dimension_names
     ]
     if not dimension_cols and month_header_idx > 0:
         dimension_cols = [
             col
             for col, cell in enumerate(rows[month_header_idx - 1][:first_month_col])
-            if compact(cell) in dimension_names
+            if compact(cell_value(cell)) in dimension_names
         ]
     if not dimension_cols:
         dimension_cols = list(range(min(3, first_month_col)))
 
     parsed: list[dict[str, Any]] = []
     for row in rows[month_header_idx + 1 :]:
-        org_parts = [clean(row[col] if col < len(row) else "") for col in dimension_cols]
+        org_parts = [clean(cell_value(row[col]) if col < len(row) else "") for col in dimension_cols]
         product = " / ".join(part for part in org_parts if part)
         if not product:
             continue
         if any(skip in product for skip in ["총계", "합계"]) and len(product) <= 12:
             product = product
         for col, company in month_cols:
-            amount = num(row[col] if col < len(row) else 0)
+            amount = num(cell_value(row[col]) if col < len(row) else 0)
             if amount == 0:
                 continue
-            parsed.append(
-                {
-                    "company": company,
-                    "product": product,
-                    "year1": amount,
-                    "year2": 0.0,
-                    "year3": 0.0,
-                    "year4": 0.0,
-                    "total": amount,
-                    "source": sheet_name,
-                }
-            )
+            item = {
+                "company": company,
+                "product": product,
+                "year1": amount,
+                "year2": 0.0,
+                "year3": 0.0,
+                "year4": 0.0,
+                "total": amount,
+                "source": sheet_name,
+            }
+            display = display_for(row, col)
+            if display:
+                item["year1Display"] = display
+            parsed.append(item)
     return parsed
 
 
@@ -293,7 +344,7 @@ def parse_workbook(file_bytes: bytes) -> list[dict[str, Any]]:
     workbook = load_workbook(BytesIO(file_bytes), data_only=True, read_only=True)
     rows: list[dict[str, Any]] = []
     for ws in workbook.worksheets:
-        values = [list(row) for row in ws.iter_rows(values_only=True)]
+        values = [list(row) for row in ws.iter_rows()]
         parsed_sheet = parse_life_sheet(values, ws.title)
         parsed_sheet.extend(parse_nonlife_sheet(values, ws.title))
         if not parsed_sheet:
@@ -349,6 +400,16 @@ def valid_session(token: str) -> dict[str, Any] | None:
     return session
 
 
+def cleanup_state() -> None:
+    now = time.time()
+    for token, session in list(SESSIONS.items()):
+        if session.get("expires", 0) < now:
+            SESSIONS.pop(token, None)
+    for ip, item in list(LOGIN_FAILURES.items()):
+        if item.get("until", 0) and item.get("until", 0) < now:
+            LOGIN_FAILURES.pop(ip, None)
+
+
 def local_ip() -> str:
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -365,6 +426,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+            "script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; "
+            "frame-ancestors 'none'; form-action 'self'",
+        )
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
@@ -388,6 +456,8 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         if length <= 0:
             return {}
+        if length > MAX_JSON_BYTES:
+            raise ValueError("요청 본문이 너무 큽니다.")
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
     def is_admin(self) -> bool:
@@ -420,7 +490,21 @@ class Handler(BaseHTTPRequestHandler):
     def clear_login_failure(self) -> None:
         LOGIN_FAILURES.pop(self.client_ip(), None)
 
+    def session_cookie(self, token: str, max_age: int = SESSION_SECONDS) -> str:
+        forwarded_proto = self.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower()
+        secure = "; Secure" if forwarded_proto == "https" else ""
+        return f"admin_session={token}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Lax{secure}"
+
+    def read_upload_body(self) -> tuple[bytes, str]:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0:
+            raise ValueError("업로드된 파일을 찾지 못했습니다.")
+        if length > MAX_UPLOAD_BYTES:
+            raise ValueError("업로드 파일이 너무 큽니다. 20MB 이하 파일만 업로드해 주세요.")
+        return self.rfile.read(length), self.headers.get("Content-Type", "")
+
     def do_GET(self) -> None:
+        cleanup_state()
         if self.path == "/api/session":
             session = self.session()
             self.send_json(
@@ -444,7 +528,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/assets/"):
             target = (ROOT / self.path.lstrip("/")).resolve()
             assets_root = (ROOT / "assets").resolve()
-            if not str(target).startswith(str(assets_root)) or not target.exists() or not target.is_file():
+            try:
+                target.relative_to(assets_root)
+            except ValueError:
+                self.send_json(404, {"error": "Not found"})
+                return
+            if not target.exists() or not target.is_file():
                 self.send_json(404, {"error": "Not found"})
                 return
             data = target.read_bytes()
@@ -457,10 +546,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         html = (ROOT / "index.html").read_text(encoding="utf-8")
-        token = session_from_cookie(self.headers.get("Cookie"))
-        if token:
-            SESSIONS.pop(token, None)
+        session = self.session()
         visible_upload = empty_upload(message="로그인 후 조회할 수 있습니다.")
+        if session:
+            visible_upload = CURRENT_UPLOAD
         payload = json.dumps(visible_upload, ensure_ascii=False).replace("</", "<\\/")
         initial_data = f"<script>window.__INITIAL_UPLOAD__ = {payload};</script>\n"
         app_script_marker = "<script>\n    const state"
@@ -472,12 +561,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Set-Cookie", "admin_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")
         self.end_headers()
         self.wfile.write(data)
 
     def do_POST(self) -> None:
         global CURRENT_UPLOAD
+        cleanup_state()
 
         if self.path == "/upload":
             session = self.session()
@@ -485,9 +574,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.redirect_home()
                 return
             try:
-                length = int(self.headers.get("Content-Length", "0"))
-                content_type = self.headers.get("Content-Type", "")
-                file_bytes, fields = parse_upload(self.rfile.read(length), content_type)
+                body, content_type = self.read_upload_body()
+                file_bytes, fields = parse_upload(body, content_type)
                 if not hmac.compare_digest(fields.get("csrf", ""), str(session.get("csrf", ""))):
                     self.redirect_home()
                     return
@@ -526,7 +614,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(
                         200,
                         {"authenticated": True, "admin": role == "admin", "role": role, "csrf": session["csrf"]},
-                        {"Set-Cookie": f"admin_session={token}; Path=/; Max-Age={SESSION_SECONDS}; HttpOnly; SameSite=Lax"},
+                        {"Set-Cookie": self.session_cookie(token)},
                     )
                     return
                 self.record_login_failure()
@@ -564,8 +652,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                content_type = self.headers.get("Content-Type", "")
-                file_bytes, _fields = parse_upload(self.rfile.read(length), content_type)
+                body, content_type = self.read_upload_body()
+                file_bytes, _fields = parse_upload(body, content_type)
                 rows = parse_workbook(file_bytes)
                 message = "" if rows else "인식 가능한 수수료 표를 찾지 못했습니다."
                 existing_rows = CURRENT_UPLOAD.get("rows", [])

@@ -430,6 +430,10 @@
       background: #fffaf0;
     }
 
+    tbody tr.data-row {
+      cursor: pointer;
+    }
+
     td.num,
     th.num {
       text-align: right;
@@ -519,6 +523,7 @@
       justify-content: center;
       padding: 20px;
       background: rgba(17, 17, 17, 0.35);
+      backdrop-filter: blur(5px);
       z-index: 50;
     }
 
@@ -560,6 +565,65 @@
 
     .modal-body {
       padding: 18px;
+    }
+
+    .modal.calculator {
+      width: min(920px, 100%);
+    }
+
+    .calc-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+      gap: 12px;
+      align-items: end;
+      margin-bottom: 14px;
+    }
+
+    .calc-title {
+      min-width: 0;
+    }
+
+    .calc-title strong {
+      display: block;
+      font-size: 16px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+
+    .calc-title span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .calc-table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+
+    .calc-table {
+      min-width: 760px;
+      font-size: 13px;
+    }
+
+    .calc-table th,
+    .calc-table td {
+      padding: 10px;
+    }
+
+    .calc-table tfoot td {
+      background: #fcfcfc;
+      font-weight: 800;
+    }
+
+    .calc-total {
+      margin-top: 12px;
+      color: var(--point-dark);
+      font-size: 15px;
+      font-weight: 800;
+      text-align: right;
     }
 
     .form-grid {
@@ -666,6 +730,10 @@
       }
 
       .form-grid.two {
+        grid-template-columns: 1fr;
+      }
+
+      .calc-head {
         grid-template-columns: 1fr;
       }
     }
@@ -800,9 +868,50 @@
     </div>
   </div>
 
+  <div id="calcModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="수수료 계산">
+    <div class="modal calculator">
+      <div class="modal-header">
+        <strong>수수료 계산</strong>
+        <button class="close-button" type="button" data-close="calcModal" aria-label="닫기">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="calc-head">
+          <div id="calcTitle" class="calc-title"></div>
+          <label class="field">금액<input id="calcAmount" inputmode="decimal" autocomplete="off"></label>
+        </div>
+        <div id="calcError" class="error-text"></div>
+        <div class="calc-table-wrap">
+          <table class="calc-table">
+            <thead>
+              <tr>
+                <th>회사</th>
+                <th>상품</th>
+                <th class="num">입력 금액</th>
+                <th class="num">1차년 %</th>
+                <th class="num">1차년 계산 금액</th>
+                <th class="num">2차년 %</th>
+                <th class="num">2차년 계산 금액</th>
+                <th class="num">3차년 %</th>
+                <th class="num">3차년 계산 금액</th>
+                <th class="num">4차년 %</th>
+                <th class="num">4차년 계산 금액</th>
+                <th class="num">총 수수료 %</th>
+                <th class="num">총 수수료 계산 금액</th>
+                <th>구분</th>
+              </tr>
+            </thead>
+            <tbody id="calcRows"></tbody>
+          </table>
+        </div>
+        <div id="calcTotal" class="calc-total"></div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const state = { rows: [], filtered: [], fileName: "", authenticated: false, admin: false, csrf: "" };
     let nextRowId = 1;
+    let activeCalcRow = null;
 
     const fileInput = document.getElementById("fileInput");
     const clearUploadButton = document.getElementById("clearUploadButton");
@@ -825,9 +934,15 @@
     const logoutMenuButton = document.getElementById("logoutMenuButton");
     const loginModal = document.getElementById("loginModal");
     const editModal = document.getElementById("editModal");
+    const calcModal = document.getElementById("calcModal");
     const loginForm = document.getElementById("loginForm");
     const editForm = document.getElementById("editForm");
     const loginError = document.getElementById("loginError");
+    const calcTitle = document.getElementById("calcTitle");
+    const calcAmount = document.getElementById("calcAmount");
+    const calcRows = document.getElementById("calcRows");
+    const calcError = document.getElementById("calcError");
+    const calcTotal = document.getElementById("calcTotal");
 
     const text = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
     const number = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -839,6 +954,51 @@
       }
       return num.toLocaleString("ko-KR", { maximumFractionDigits: 0 });
     };
+
+    const formatCell = (row, key) => row[`${key}Display`] || formatNumber(row[key]);
+    const formatMoney = (value) => Math.round(number(value)).toLocaleString("ko-KR");
+
+    const formatPercentRate = (value) => {
+      const rate = number(value) * 100;
+      return `${rate.toLocaleString("ko-KR", { maximumFractionDigits: 3 })}%`;
+    };
+
+    const hasPercentDisplay = (row) =>
+      ["year1Display", "year2Display", "year3Display", "year4Display"].some((key) => String(row[key] || "").includes("%"));
+
+    function parseAmount(value) {
+      const raw = text(value).replace(/,/g, "").replace(/\s+/g, "");
+      if (!raw) return 0;
+      if (/^\d+(\.\d+)?$/.test(raw)) return Number(raw);
+      const unitMap = {
+        "억": 100000000,
+        "천만원": 10000000,
+        "백만원": 1000000,
+        "십만원": 100000,
+        "만원": 10000,
+        "만": 10000,
+        "천원": 1000,
+        "천": 1000,
+        "백원": 100,
+        "백": 100,
+        "십원": 10,
+        "십": 10,
+        "원": 1
+      };
+      const pattern = /(\d+(?:\.\d+)?)(천만원|백만원|십만원|만원|천원|백원|십원|억|만|천|백|십|원)?/g;
+      let total = 0;
+      let matched = "";
+      let match;
+      while ((match = pattern.exec(raw))) {
+        matched += match[0];
+        total += Number(match[1]) * (unitMap[match[2] || "원"] || 1);
+      }
+      return matched === raw ? total : 0;
+    }
+
+    function rateText(row, key) {
+      return row[`${key}Display`] || (hasPercentDisplay(row) ? formatPercentRate(row[key]) : formatNumber(row[key]));
+    }
 
     function escapeHtml(value) {
       return text(value)
@@ -922,14 +1082,14 @@
 
     function render() {
       tableBody.innerHTML = state.filtered.map((row) => `
-        <tr>
+        <tr class="data-row" data-id="${row.id}">
           <td class="company">${escapeHtml(row.company)}</td>
           <td class="product">${escapeHtml(row.product)}</td>
-          <td class="num">${formatNumber(row.year1)}</td>
-          <td class="num">${formatNumber(row.year2)}</td>
-          <td class="num">${formatNumber(row.year3)}</td>
-          <td class="num">${formatNumber(row.year4)}</td>
-          <td class="num"><strong>${formatNumber(row.total)}</strong></td>
+          <td class="num">${escapeHtml(formatCell(row, "year1"))}</td>
+          <td class="num">${escapeHtml(formatCell(row, "year2"))}</td>
+          <td class="num">${escapeHtml(formatCell(row, "year3"))}</td>
+          <td class="num">${escapeHtml(formatCell(row, "year4"))}</td>
+          <td class="num"><strong>${escapeHtml(formatCell(row, "total"))}</strong></td>
           <td class="sheet">${escapeHtml(row.source)}</td>
           <td class="admin-col">
             ${state.admin ? `
@@ -979,7 +1139,12 @@
         const year2 = number(row.year2);
         const year3 = number(row.year3);
         const year4 = number(row.year4);
-        return { ...row, year1, year2, year3, year4, total: year1 + year2 + year3 + year4, id: nextRowId++ };
+        const total = year1 + year2 + year3 + year4;
+        const normalized = { ...row, year1, year2, year3, year4, total, id: nextRowId++ };
+        if (!normalized.totalDisplay && hasPercentDisplay(normalized)) {
+          normalized.totalDisplay = formatPercentRate(total);
+        }
+        return normalized;
       }).sort((a, b) =>
         a.company.localeCompare(b.company, "ko") ||
         a.product.localeCompare(b.product, "ko") ||
@@ -1070,6 +1235,47 @@
       document.getElementById("editYear3").value = row.year3;
       document.getElementById("editYear4").value = row.year4;
       openModal(editModal);
+    }
+
+    function renderCalculator() {
+      if (!activeCalcRow) return;
+      const amount = parseAmount(calcAmount.value);
+      const hasAmount = amount > 0;
+      calcError.textContent = calcAmount.value && !hasAmount ? "금액을 숫자 또는 10만원 형식으로 입력해 주세요." : "";
+      const years = ["year1", "year2", "year3", "year4"];
+      const calculated = Object.fromEntries(years.map((key) => [key, amount * number(activeCalcRow[key])]));
+      const totalCalculated = years.reduce((sum, key) => sum + calculated[key], 0);
+      calcRows.innerHTML = `
+        <tr>
+          <td>${escapeHtml(activeCalcRow.company)}</td>
+          <td>${escapeHtml(activeCalcRow.product)}</td>
+          <td class="num">${hasAmount ? formatMoney(amount) : ""}</td>
+          <td class="num">${escapeHtml(rateText(activeCalcRow, "year1"))}</td>
+          <td class="num">${hasAmount ? formatMoney(calculated.year1) : ""}</td>
+          <td class="num">${escapeHtml(rateText(activeCalcRow, "year2"))}</td>
+          <td class="num">${hasAmount ? formatMoney(calculated.year2) : ""}</td>
+          <td class="num">${escapeHtml(rateText(activeCalcRow, "year3"))}</td>
+          <td class="num">${hasAmount ? formatMoney(calculated.year3) : ""}</td>
+          <td class="num">${escapeHtml(rateText(activeCalcRow, "year4"))}</td>
+          <td class="num">${hasAmount ? formatMoney(calculated.year4) : ""}</td>
+          <td class="num">${escapeHtml(formatCell(activeCalcRow, "total"))}</td>
+          <td class="num">${hasAmount ? formatMoney(totalCalculated) : ""}</td>
+          <td>${escapeHtml(activeCalcRow.source)}</td>
+        </tr>
+      `;
+      calcTotal.textContent = hasAmount ? `총 수수료 계산 금액 ${formatMoney(totalCalculated)}원` : "";
+    }
+
+    function openCalculator(rowId) {
+      const row = state.rows.find((item) => item.id === rowId);
+      if (!row) return;
+      activeCalcRow = row;
+      calcTitle.innerHTML = `<strong>${escapeHtml(row.company)} / ${escapeHtml(row.product)}</strong><span>${escapeHtml(row.source)}</span>`;
+      calcAmount.value = "";
+      calcError.textContent = "";
+      renderCalculator();
+      openModal(calcModal);
+      setTimeout(() => calcAmount.focus(), 0);
     }
 
     function deleteRow(rowId) {
@@ -1175,6 +1381,11 @@
       row.year3 = number(document.getElementById("editYear3").value);
       row.year4 = number(document.getElementById("editYear4").value);
       row.total = row.year1 + row.year2 + row.year3 + row.year4;
+      delete row.year1Display;
+      delete row.year2Display;
+      delete row.year3Display;
+      delete row.year4Display;
+      delete row.totalDisplay;
       rebuildFilters(state.rows);
       applyFilters();
       closeModal(editModal);
@@ -1192,11 +1403,17 @@
 
     tableBody.addEventListener("click", (event) => {
       const button = event.target.closest("button[data-action]");
-      if (!button) return;
-      const rowId = Number(button.dataset.id);
-      if (button.dataset.action === "edit") openEdit(rowId);
-      if (button.dataset.action === "delete") deleteRow(rowId);
+      if (button) {
+        const rowId = Number(button.dataset.id);
+        if (button.dataset.action === "edit") openEdit(rowId);
+        if (button.dataset.action === "delete") deleteRow(rowId);
+        return;
+      }
+      const row = event.target.closest("tr[data-id]");
+      if (row) openCalculator(Number(row.dataset.id));
     });
+
+    calcAmount.addEventListener("input", renderCalculator);
 
     fileInput.addEventListener("click", () => {
       fileInput.value = "";
