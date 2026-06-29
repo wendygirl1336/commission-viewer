@@ -333,6 +333,7 @@ class Handler(BaseHTTPRequestHandler):
                 {
                     "authenticated": bool(session),
                     "admin": bool(session and session.get("role") == "admin"),
+                    "role": session.get("role", "") if session else "",
                     "csrf": session.get("csrf", "") if session else "",
                 },
             )
@@ -430,6 +431,19 @@ class Handler(BaseHTTPRequestHandler):
             token = session_from_cookie(self.headers.get("Cookie"))
             SESSIONS.pop(token, None)
             self.send_json(200, {"admin": False}, {"Set-Cookie": "admin_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"})
+            return
+
+        if self.path == "/api/switch-viewer":
+            session = self.session()
+            if not session or session.get("role") != "admin":
+                self.send_json(403, {"error": "관리자 로그인 후 조회 모드로 전환할 수 있습니다."})
+                return
+            if not hmac.compare_digest(self.headers.get("X-CSRF-Token", ""), str(session.get("csrf", ""))):
+                self.send_json(403, {"error": "보안 토큰이 올바르지 않습니다. 새로고침 후 다시 시도해 주세요."})
+                return
+            session["role"] = "viewer"
+            session["csrf"] = secrets.token_urlsafe(32)
+            self.send_json(200, {"authenticated": True, "admin": False, "role": "viewer", "csrf": session["csrf"]})
             return
 
         if self.path == "/api/upload":

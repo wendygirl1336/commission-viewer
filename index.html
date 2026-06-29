@@ -637,6 +637,7 @@
         <div id="userMenu" class="user-menu">
           <div id="adminStatus">로그인 필요</div>
           <button id="loginMenuButton" type="button">로그인</button>
+          <button id="viewerModeButton" type="button" hidden>조회 모드 전환</button>
           <button id="logoutMenuButton" type="button" hidden>로그아웃</button>
         </div>
       </div>
@@ -764,6 +765,7 @@
     const userMenu = document.getElementById("userMenu");
     const adminStatus = document.getElementById("adminStatus");
     const loginMenuButton = document.getElementById("loginMenuButton");
+    const viewerModeButton = document.getElementById("viewerModeButton");
     const logoutMenuButton = document.getElementById("logoutMenuButton");
     const loginModal = document.getElementById("loginModal");
     const editModal = document.getElementById("editModal");
@@ -806,7 +808,9 @@
         : state.authenticated
           ? "조회 모드"
           : "로그인 필요";
-      loginMenuButton.hidden = state.authenticated;
+      loginMenuButton.hidden = state.admin;
+      loginMenuButton.textContent = state.authenticated ? "관리자 로그인" : "로그인";
+      viewerModeButton.hidden = !state.admin;
       logoutMenuButton.hidden = !state.authenticated;
       render();
     }
@@ -991,6 +995,30 @@
       document.getElementById("adminPassword").value = "";
       openModal(loginModal);
       setTimeout(() => document.getElementById("adminId").focus(), 0);
+    });
+
+    viewerModeButton.addEventListener("click", async () => {
+      viewerModeButton.disabled = true;
+      viewerModeButton.textContent = "전환 중";
+      try {
+        const response = await fetch("/api/switch-viewer", {
+          method: "POST",
+          headers: { "X-CSRF-Token": state.csrf }
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          alert(payload.error || "조회 모드로 전환하지 못했습니다.");
+          return;
+        }
+        state.csrf = payload.csrf || "";
+        setAuthMode(true, false);
+        userMenu.classList.remove("open");
+      } catch (error) {
+        alert("서버에 연결하지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.");
+      } finally {
+        viewerModeButton.disabled = false;
+        viewerModeButton.textContent = "조회 모드 전환";
+      }
     });
 
     logoutMenuButton.addEventListener("click", async () => {
