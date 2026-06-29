@@ -302,6 +302,25 @@
       display: inline-flex;
     }
 
+    .delete-scope {
+      display: none;
+      align-items: center;
+      gap: 4px;
+    }
+
+    body.admin-mode .delete-scope {
+      display: inline-flex;
+    }
+
+    .delete-scope select {
+      height: 44px;
+      min-width: 136px;
+      border-color: #eadfca;
+      color: #6f5728;
+      font-size: 13px;
+      background: #fffdf8;
+    }
+
     .secondary-button {
       height: 40px;
       padding: 0 14px;
@@ -685,7 +704,12 @@
             <input id="csrfToken" name="csrf" type="hidden">
             <input id="fileInput" name="file" type="file" accept=".xlsx,.xlsm,.xltx,.xltm">
           </form>
-          <button id="clearUploadButton" class="danger-button upload-form" type="button">전체 삭제</button>
+          <div class="delete-scope">
+            <select id="deleteScopeSelect">
+              <option value="">전체 삭제</option>
+            </select>
+            <button id="clearUploadButton" class="danger-button" type="button">삭제</button>
+          </div>
         </div>
 
         <div class="summary">
@@ -780,6 +804,7 @@
 
     const fileInput = document.getElementById("fileInput");
     const clearUploadButton = document.getElementById("clearUploadButton");
+    const deleteScopeSelect = document.getElementById("deleteScopeSelect");
     const csrfToken = document.getElementById("csrfToken");
     const searchInput = document.getElementById("searchInput");
     const companyFilter = document.getElementById("companyFilter");
@@ -875,6 +900,7 @@
       const sources = [...new Set(rows.map((row) => row.source))].sort((a, b) => a.localeCompare(b, "ko"));
       companyFilter.innerHTML = '<option value="">전체 회사</option>' + companies.map((value) => `<option>${escapeHtml(value)}</option>`).join("");
       sourceFilter.innerHTML = '<option value="">전체 구분</option>' + sources.map((value) => `<option>${escapeHtml(value)}</option>`).join("");
+      deleteScopeSelect.innerHTML = '<option value="">전체 삭제</option>' + sources.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)} 삭제</option>`).join("");
       if (companies.includes(currentCompany)) companyFilter.value = currentCompany;
       if (sources.includes(currentSource)) sourceFilter.value = currentSource;
     }
@@ -933,6 +959,7 @@
       searchInput.value = "";
       companyFilter.innerHTML = '<option value="">전체 회사</option>';
       sourceFilter.innerHTML = '<option value="">전체 구분</option>';
+      deleteScopeSelect.innerHTML = '<option value="">전체 삭제</option>';
       notice.style.display = "none";
       statusText.textContent = nextFileName ? "새 파일을 읽는 중입니다." : "파일을 업로드하면 표가 표시됩니다.";
       render();
@@ -1002,6 +1029,8 @@
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error || "엑셀 파일을 읽지 못했습니다.");
           loadRowsFromPayload({ ...payload, fileName: file.name });
+          notice.textContent = `${file.name} 데이터가 기존 목록에 추가되었습니다.`;
+          notice.style.display = "block";
         })
         .catch((error) => {
           clearCurrentData("");
@@ -1171,13 +1200,19 @@
         notice.style.display = "block";
         return;
       }
-      if (!window.confirm("업로드된 엑셀 데이터를 전체 삭제할까요?")) return;
+      const source = deleteScopeSelect.value;
+      const targetText = source ? `${source} 구분` : "전체";
+      if (!window.confirm(`${targetText} 데이터를 삭제할까요?`)) return;
       clearUploadButton.disabled = true;
       clearUploadButton.textContent = "삭제 중";
       try {
         const response = await fetch("/api/clear-upload", {
           method: "POST",
-          headers: { "X-CSRF-Token": state.csrf }
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": state.csrf
+          },
+          body: JSON.stringify({ source })
         });
         const payload = await response.json();
         if (!response.ok) {
@@ -1185,9 +1220,10 @@
           notice.style.display = "block";
           return;
         }
-        clearCurrentData("");
+        loadRowsFromPayload(payload);
         fileInput.value = "";
-        notice.textContent = payload.message || "업로드된 엑셀 데이터가 삭제되었습니다.";
+        if (!payload.rows.length) clearCurrentData("");
+        notice.textContent = payload.message || `${targetText} 데이터가 삭제되었습니다.`;
         notice.style.display = "block";
       } catch (error) {
         notice.textContent = "서버에 연결하지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.";

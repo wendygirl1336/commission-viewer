@@ -397,8 +397,10 @@ class Handler(BaseHTTPRequestHandler):
                     self.redirect_home()
                     return
                 rows = parse_workbook(file_bytes)
+                existing_rows = CURRENT_UPLOAD.get("rows", [])
+                combined_rows = existing_rows + rows
                 CURRENT_UPLOAD = {
-                    "rows": rows,
+                    "rows": combined_rows,
                     "fileName": "업로드된 엑셀 파일",
                     "message": "" if rows else "인식 가능한 수수료 표를 찾지 못했습니다.",
                     "error": "",
@@ -471,14 +473,16 @@ class Handler(BaseHTTPRequestHandler):
                 file_bytes, _fields = parse_upload(self.rfile.read(length), content_type)
                 rows = parse_workbook(file_bytes)
                 message = "" if rows else "인식 가능한 수수료 표를 찾지 못했습니다."
+                existing_rows = CURRENT_UPLOAD.get("rows", [])
+                combined_rows = existing_rows + rows
                 CURRENT_UPLOAD = {
-                    "rows": rows,
+                    "rows": combined_rows,
                     "fileName": "업로드된 엑셀 파일",
                     "message": message,
                     "error": "",
                 }
                 save_upload(CURRENT_UPLOAD)
-                self.send_json(200, {"rows": rows, "message": message})
+                self.send_json(200, {**CURRENT_UPLOAD, "addedRows": len(rows)})
             except Exception as exc:
                 self.send_json(400, {"error": f"엑셀 파일을 읽지 못했습니다: {exc}"})
             return
@@ -491,7 +495,21 @@ class Handler(BaseHTTPRequestHandler):
             if not hmac.compare_digest(self.headers.get("X-CSRF-Token", ""), str(session.get("csrf", ""))):
                 self.send_json(403, {"error": "보안 토큰이 올바르지 않습니다. 새로고침 후 다시 시도해 주세요."})
                 return
-            CURRENT_UPLOAD = empty_upload("업로드된 엑셀 데이터가 삭제되었습니다.")
+            payload = self.read_json()
+            source = str(payload.get("source", "")).strip()
+            if source:
+                rows = [row for row in CURRENT_UPLOAD.get("rows", []) if str(row.get("source", "")) != source]
+                removed_count = len(CURRENT_UPLOAD.get("rows", [])) - len(rows)
+                CURRENT_UPLOAD = {
+                    "rows": rows,
+                    "fileName": CURRENT_UPLOAD.get("fileName", "업로드된 엑셀 파일") if rows else "",
+                    "message": f"{source} 구분 데이터가 삭제되었습니다.",
+                    "error": "",
+                }
+                save_upload(CURRENT_UPLOAD)
+                self.send_json(200, {**CURRENT_UPLOAD, "removedRows": removed_count})
+                return
+            CURRENT_UPLOAD = empty_upload("업로드된 엑셀 데이터가 전체 삭제되었습니다.")
             save_upload(CURRENT_UPLOAD)
             self.send_json(200, CURRENT_UPLOAD)
             return
