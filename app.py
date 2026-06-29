@@ -382,23 +382,43 @@ def find_generic_header(rows: list[list[Any]]) -> int:
 
 
 def find_product_col(rows: list[list[Any]], header_idx: int, first_rate_col: int) -> int:
-    preferred = [
-        col
-        for col in range(max(first_rate_col, 1))
-        if any(token in header_text(rows, header_idx, col) for token in ["\uc0c1\ud488\uba85", "\uc0c1\ud488", "惑前疙"])
-    ]
-    if preferred:
-        return preferred[0]
-
     max_col = max(1, min(first_rate_col, 8))
-    scores: dict[int, int] = {col: 0 for col in range(max_col)}
-    for row in rows[header_idx + 1 : min(len(rows), header_idx + 80)]:
+    hard_disallowed = ["상품구분", "상품유형", "상품가입"]
+    disallowed = hard_disallowed + ["구분", "유형", "납기", "납입", "기간", "만기", "연령", "보험료", "환산", "수수료", "성과"]
+
+    for col in range(max_col):
+        label = header_text(rows, header_idx, col)
+        if "상품명" in label and not any(token in label for token in hard_disallowed):
+            return col
+
+    scores: dict[int, float] = {col: 0.0 for col in range(max_col)}
+    for col in range(max_col):
+        label = header_text(rows, header_idx, col)
+        if any(token in label for token in ["상품명", "보험명"]):
+            scores[col] += 60
+        if any(token in label for token in ["보험", "무배당", "종신", "연금", "보장"]):
+            scores[col] += 25
+        if any(token in label for token in disallowed):
+            scores[col] -= 80
+        if label.startswith(("※", "∝", "*")):
+            scores[col] -= 120
+
+    for row in rows[header_idx + 1 : min(len(rows), header_idx + 140)]:
         if sum(1 for col in range(len(row)) if has_percent_number(row, col)) < 1:
             continue
         for col in range(max_col):
             text = clean(row_value(row, col))
-            if len(text) >= 3 and not re.fullmatch(r"[-\d.,% ]+", text):
-                scores[col] += min(len(text), 30)
+            if len(text) < 2 or re.fullmatch(r"[-\d.,% ]+", text):
+                continue
+            compact_text = compact(text)
+            score = min(len(text), 60)
+            if any(token in compact_text for token in ["보험", "무배당", "종신", "연금", "보장", "라이프"]):
+                score += 45
+            if any(token in compact_text for token in ["상품구분", "상품유형", "구분", "유형", "납기", "납입", "기간", "만기", "연령", "보험료"]):
+                score -= 70
+            if len(text) <= 5:
+                score -= 15
+            scores[col] += score
     return max(scores, key=scores.get) if scores else 0
 
 
