@@ -463,27 +463,33 @@ def parse_generic_rate_sheet(rows: list[list[Any]], sheet_name: str) -> list[dic
         y1_col = selected[0]
 
     parsed: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str]] = set()
+    current_product = ""
     for row in rows[header_idx + 1 :]:
-        product = clean(row_value(row, product_col))
-        if not product or len(product) < 2:
+        raw_product = clean(row_value(row, product_col))
+        base_product = raw_product or current_product
+        if not base_product or len(base_product) < 2:
             continue
-        compact_product = compact(product)
+        compact_product = compact(base_product)
         if compact_product in {"상품", "상품명", "회사", "보험사", "수수료", "구분", "惑前疙", "荐荐丰", "券魂"}:
             continue
+        if raw_product:
+            current_product = raw_product
         if not any(has_percent_number(row, col) for col in (y1_col, y2_col, y3_col, y4_col)):
             continue
 
         category_parts = []
-        for col in range(0, min(product_col, 4)):
+        dimension_limit = min([col for col in (y1_col, y2_col, y3_col, y4_col, first_rate_col) if col >= 0] or [first_rate_col])
+        for col in range(0, max(dimension_limit, product_col + 1)):
+            if col == product_col:
+                continue
             text = clean(row_value(row, col))
-            if text and text != product and not re.fullmatch(r"[-\d.,% ]+", text):
-                category_parts.append(text)
-        category = " / ".join(category_parts[:2])
-        unique_key = (company, product, category)
-        if unique_key in seen:
-            continue
-        seen.add(unique_key)
+            if not text or text == base_product:
+                continue
+            if text in {"-", "–", "—"}:
+                continue
+            category_parts.append(text[:80])
+        category = " / ".join(category_parts[:5])
+        product = base_product if not category else f"{base_product} ({category})"
 
         year1 = num(row_value(row, y1_col))
         year2 = num(row_value(row, y2_col))
