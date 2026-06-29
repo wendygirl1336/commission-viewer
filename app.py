@@ -472,6 +472,19 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": f"엑셀 파일을 읽지 못했습니다: {exc}"})
             return
 
+        if self.path == "/api/clear-upload":
+            session = self.session()
+            if not session or session.get("role") != "admin":
+                self.send_json(403, {"error": "관리자 로그인 후 삭제할 수 있습니다."})
+                return
+            if not hmac.compare_digest(self.headers.get("X-CSRF-Token", ""), str(session.get("csrf", ""))):
+                self.send_json(403, {"error": "보안 토큰이 올바르지 않습니다. 새로고침 후 다시 시도해 주세요."})
+                return
+            CURRENT_UPLOAD = empty_upload("업로드된 엑셀 데이터가 삭제되었습니다.")
+            save_upload(CURRENT_UPLOAD)
+            self.send_json(200, CURRENT_UPLOAD)
+            return
+
         self.send_json(404, {"error": "Not found"})
 
     def log_message(self, format: str, *args: Any) -> None:

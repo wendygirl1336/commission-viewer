@@ -245,6 +245,7 @@
     }
 
     .upload-label,
+    .danger-button,
     .primary-button {
       height: 44px;
       min-width: 132px;
@@ -265,6 +266,18 @@
     .primary-button:hover {
       background: var(--point-dark);
       border-color: var(--point-dark);
+    }
+
+    .danger-button {
+      border: 1px solid #f4c7c3;
+      background: #fff7f6;
+      color: var(--danger);
+    }
+
+    .danger-button:hover {
+      border-color: var(--danger);
+      background: var(--danger);
+      color: var(--white);
     }
 
     .upload-form {
@@ -658,6 +671,7 @@
             <input id="csrfToken" name="csrf" type="hidden">
             <input id="fileInput" name="file" type="file" accept=".xlsx,.xlsm,.xltx,.xltm">
           </form>
+          <button id="clearUploadButton" class="danger-button upload-form" type="button">전체 삭제</button>
         </div>
 
         <div class="summary">
@@ -751,6 +765,7 @@
     let nextRowId = 1;
 
     const fileInput = document.getElementById("fileInput");
+    const clearUploadButton = document.getElementById("clearUploadButton");
     const csrfToken = document.getElementById("csrfToken");
     const searchInput = document.getElementById("searchInput");
     const companyFilter = document.getElementById("companyFilter");
@@ -1103,6 +1118,40 @@
       const file = event.target.files && event.target.files[0];
       if (!file) return;
       handleFile(file);
+    });
+
+    clearUploadButton.addEventListener("click", async () => {
+      if (!state.admin) return;
+      if (!state.rows.length && !state.fileName) {
+        notice.textContent = "삭제할 업로드 데이터가 없습니다.";
+        notice.style.display = "block";
+        return;
+      }
+      if (!window.confirm("업로드된 엑셀 데이터를 전체 삭제할까요?")) return;
+      clearUploadButton.disabled = true;
+      clearUploadButton.textContent = "삭제 중";
+      try {
+        const response = await fetch("/api/clear-upload", {
+          method: "POST",
+          headers: { "X-CSRF-Token": state.csrf }
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          notice.textContent = payload.error || "업로드 데이터를 삭제하지 못했습니다.";
+          notice.style.display = "block";
+          return;
+        }
+        clearCurrentData("");
+        fileInput.value = "";
+        notice.textContent = payload.message || "업로드된 엑셀 데이터가 삭제되었습니다.";
+        notice.style.display = "block";
+      } catch (error) {
+        notice.textContent = "서버에 연결하지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.";
+        notice.style.display = "block";
+      } finally {
+        clearUploadButton.disabled = false;
+        clearUploadButton.textContent = "전체 삭제";
+      }
     });
 
     searchInput.addEventListener("input", applyFilters);
