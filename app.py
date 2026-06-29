@@ -32,6 +32,7 @@ MAX_LOGIN_FAILURES = 5
 LOCK_SECONDS = 60 * 5
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 MAX_JSON_BYTES = 64 * 1024
+MAX_PARSE_COLS = 220
 SESSIONS: dict[str, dict[str, Any]] = {}
 LOGIN_FAILURES: dict[str, dict[str, Any]] = {}
 
@@ -130,6 +131,10 @@ def display_for(row: list[Any], col: int) -> str:
     if col < 0 or col >= len(row):
         return ""
     return cell_display(row[col])
+
+
+def row_value(row: list[Any], col: int) -> Any:
+    return cell_value(row[col]) if 0 <= col < len(row) else ""
 
 
 def find_col(row: list[Any], candidates: list[str]) -> int:
@@ -327,6 +332,187 @@ def parse_monthly_matrix_sheet(rows: list[list[Any]], sheet_name: str) -> list[d
     return parsed
 
 
+def sheet_company(sheet_name: str) -> str:
+    name = re.sub(r"\([^)]*\)", "", sheet_name).strip()
+    return name or sheet_name
+
+
+def header_text(rows: list[list[Any]], header_idx: int, col: int) -> str:
+    parts = []
+    for idx in range(max(0, header_idx - 3), min(len(rows), header_idx + 3)):
+        value = clean(row_value(rows[idx], col))
+        if value:
+            parts.append(value)
+    return compact(" ".join(parts))
+
+
+def has_percent_number(row: list[Any], col: int) -> bool:
+    if col < 0 or col >= len(row):
+        return False
+    cell = row[col]
+    value = cell_value(cell)
+    return isinstance(value, (int, float)) and hasattr(cell, "number_format") and is_percent_format(cell.number_format)
+
+
+def likely_header_score(row: list[Any]) -> int:
+    labels = [compact(cell_value(cell)) for cell in row if clean(cell_value(cell))]
+    score = 0
+    for label in labels:
+        if any(token in label for token in ["상품", "회사", "보험", "구분", "수수료", "환산", "1차", "2차", "3차", "4차"]):
+            score += 2
+        if any(token in label for token in ["惑前", "蹂댄뿕", "备盒", "荐荐丰", "券魂", "1瞒", "2瞒", "3瞒", "4瞒"]):
+            score += 2
+        if any(token.lower() in label.lower() for token in ["commission", "rate", "product"]):
+            score += 2
+    return score
+
+
+def find_generic_header(rows: list[list[Any]]) -> int:
+    best_idx = -1
+    best_score = 0
+    for idx, row in enumerate(rows[:30]):
+        score = likely_header_score(row)
+        percent_count = sum(1 for cell in row if hasattr(cell, "number_format") and is_percent_format(cell.number_format))
+        if percent_count >= 3:
+            score += percent_count
+        if score > best_score:
+            best_idx = idx
+            best_score = score
+    return best_idx if best_score >= 4 else -1
+
+
+def find_product_col(rows: list[list[Any]], header_idx: int, first_rate_col: int) -> int:
+    preferred = [
+        col
+        for col in range(max(first_rate_col, 1))
+        if any(token in header_text(rows, header_idx, col) for token in ["\uc0c1\ud488\uba85", "\uc0c1\ud488", "惑前疙"])
+    ]
+    if preferred:
+        return preferred[0]
+
+    max_col = max(1, min(first_rate_col, 8))
+    scores: dict[int, int] = {col: 0 for col in range(max_col)}
+    for row in rows[header_idx + 1 : min(len(rows), header_idx + 80)]:
+        if sum(1 for col in range(len(row)) if has_percent_number(row, col)) < 1:
+            continue
+        for col in range(max_col):
+            text = clean(row_value(row, col))
+            if len(text) >= 3 and not re.fullmatch(r"[-\d.,% ]+", text):
+                scores[col] += min(len(text), 30)
+    return max(scores, key=scores.get) if scores else 0
+
+
+def find_rate_col(rows: list[list[Any]], header_idx: int, tokens: list[str], used: set[int]) -> int:
+    candidates: list[tuple[int, int]] = []
+    width = max((len(row) for row in rows[: min(len(rows), 40)]), default=0)
+    for col in range(width):
+        if col in used:
+            continue
+        label = header_text(rows, header_idx, col)
+        normalized_tokens = tokens + [token.encode("utf-8").decode("utf-8") for token in tokens]
+        if not any(token in label for token in normalized_tokens):
+            continue
+        count = sum(1 for row in rows[header_idx + 1 : min(len(rows), header_idx + 120)] if has_percent_number(row, col))
+        if count:
+            candidates.append((count, col))
+    if not candidates:
+        return -1
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    return candidates[0][1]
+
+
+def parse_generic_rate_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, Any]]:
+    header_idx = find_generic_header(rows)
+    if header_idx < 0:
+        return []
+
+    percent_cols = sorted(
+        {
+            col
+            for row in rows[header_idx + 1 : min(len(rows), header_idx + 120)]
+            for col in range(len(row))
+            if has_percent_number(row, col)
+        }
+    )
+    if not percent_cols:
+        return []
+
+    first_rate_col = min(percent_cols)
+    product_col = find_product_col(rows, header_idx, first_rate_col)
+    company = sheet_company(sheet_name)
+
+    used: set[int] = set()
+    y1_col = find_rate_col(rows, header_idx, ["\u0031\ucc28", "1瞒", "\ucd08\ub144", "\ucd08\ud68c", "CommissionRate"], used)
+    if y1_col >= 0:
+        used.add(y1_col)
+    y2_col = find_rate_col(rows, header_idx, ["\u0032\ucc28", "2瞒"], used)
+    if y2_col >= 0:
+        used.add(y2_col)
+    y3_col = find_rate_col(rows, header_idx, ["\u0033\ucc28", "3瞒"], used)
+    if y3_col >= 0:
+        used.add(y3_col)
+    y4_col = find_rate_col(rows, header_idx, ["\u0034\ucc28", "4瞒"], used)
+    if y4_col >= 0:
+        used.add(y4_col)
+
+    selected = [col for col in (y1_col, y2_col, y3_col, y4_col) if col >= 0]
+    if not selected:
+        selected = [col for col in percent_cols if col >= product_col][:4]
+        y1_col, y2_col, y3_col, y4_col = (selected + [-1, -1, -1, -1])[:4]
+    elif y1_col < 0:
+        y1_col = selected[0]
+
+    parsed: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in rows[header_idx + 1 :]:
+        product = clean(row_value(row, product_col))
+        if not product or len(product) < 2:
+            continue
+        compact_product = compact(product)
+        if compact_product in {"상품", "상품명", "회사", "보험사", "수수료", "구분", "惑前疙", "荐荐丰", "券魂"}:
+            continue
+        if not any(has_percent_number(row, col) for col in (y1_col, y2_col, y3_col, y4_col)):
+            continue
+
+        category_parts = []
+        for col in range(0, min(product_col, 4)):
+            text = clean(row_value(row, col))
+            if text and text != product and not re.fullmatch(r"[-\d.,% ]+", text):
+                category_parts.append(text)
+        category = " / ".join(category_parts[:2])
+        unique_key = (company, product, category)
+        if unique_key in seen:
+            continue
+        seen.add(unique_key)
+
+        year1 = num(row_value(row, y1_col))
+        year2 = num(row_value(row, y2_col))
+        year3 = num(row_value(row, y3_col))
+        year4 = num(row_value(row, y4_col))
+        item = {
+            "company": company,
+            "product": product,
+            "category": category,
+            "year1": year1,
+            "year2": year2,
+            "year3": year3,
+            "year4": year4,
+            "total": year1 + year2 + year3 + year4,
+            "source": sheet_name,
+        }
+        for key, col in (("year1", y1_col), ("year2", y2_col), ("year3", y3_col), ("year4", y4_col)):
+            display = display_for(row, col)
+            if display:
+                item[f"{key}Display"] = display
+        parsed.append(item)
+    return parsed
+
+
+def worksheet_rows(ws: Any) -> list[list[Any]]:
+    max_col = min(ws.max_column or 1, MAX_PARSE_COLS)
+    return [list(row) for row in ws.iter_rows(max_col=max_col)]
+
+
 def parse_workbook(file_bytes: bytes) -> list[dict[str, Any]]:
     if not file_bytes:
         raise ValueError("업로드된 파일이 비어 있습니다.")
@@ -335,11 +521,13 @@ def parse_workbook(file_bytes: bytes) -> list[dict[str, Any]]:
     workbook = load_workbook(BytesIO(file_bytes), data_only=True, read_only=True)
     rows: list[dict[str, Any]] = []
     for ws in workbook.worksheets:
-        values = [list(row) for row in ws.iter_rows()]
+        values = worksheet_rows(ws)
         parsed_sheet = parse_life_sheet(values, ws.title)
         parsed_sheet.extend(parse_nonlife_sheet(values, ws.title))
         if not parsed_sheet:
             parsed_sheet.extend(parse_monthly_matrix_sheet(values, ws.title))
+        if not parsed_sheet:
+            parsed_sheet.extend(parse_generic_rate_sheet(values, ws.title))
         rows.extend(parsed_sheet)
     return [row for row in rows if row["company"] and row["product"]]
 
