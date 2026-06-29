@@ -1002,22 +1002,33 @@
     loginForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       loginError.textContent = "";
-      const response = await fetch("/api/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: document.getElementById("adminId").value.trim(),
-          password: document.getElementById("adminPassword").value
-        })
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        loginError.textContent = payload.error || "로그인에 실패했습니다.";
-        return;
+      const submitButton = loginForm.querySelector('button[type="submit"]');
+      submitButton.disabled = true;
+      submitButton.textContent = "로그인 중";
+      try {
+        const response = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: document.getElementById("adminId").value.trim(),
+            password: document.getElementById("adminPassword").value
+          })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          loginError.textContent = payload.error || "로그인에 실패했습니다.";
+          return;
+        }
+        state.csrf = payload.csrf || "";
+        setAuthMode(true, Boolean(payload.admin));
+        closeModal(loginModal);
+        window.setTimeout(() => window.location.reload(), 150);
+      } catch (error) {
+        loginError.textContent = "서버에 연결하지 못했습니다. 페이지를 새로고침한 뒤 다시 로그인해 주세요.";
+      } finally {
+        submitButton.disabled = false;
+        submitButton.textContent = "로그인";
       }
-      state.csrf = payload.csrf || "";
-      closeModal(loginModal);
-      window.location.reload();
     });
 
     editForm.addEventListener("submit", (event) => {

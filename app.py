@@ -25,6 +25,8 @@ ADMIN_ID = "admin"
 ADMIN_PASSWORD = "1234"
 VIEWER_ID = "company"
 VIEWER_PASSWORD = "1234"
+ADMIN_LOGIN_IDS = {ADMIN_ID, "관리자"}
+VIEWER_LOGIN_IDS = {VIEWER_ID, "회사"}
 SESSION_SECONDS = 60 * 60 * 4
 MAX_LOGIN_FAILURES = 5
 LOCK_SECONDS = 60 * 5
@@ -401,12 +403,12 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(429, {"error": "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요."})
                     return
                 payload = self.read_json()
-                login_id = str(payload.get("id", ""))
+                login_id = str(payload.get("id", "")).strip().lower()
                 password = str(payload.get("password", ""))
                 role = ""
-                if hmac.compare_digest(login_id, ADMIN_ID) and hmac.compare_digest(password, ADMIN_PASSWORD):
+                if login_id in ADMIN_LOGIN_IDS and hmac.compare_digest(password, ADMIN_PASSWORD):
                     role = "admin"
-                elif hmac.compare_digest(login_id, VIEWER_ID) and hmac.compare_digest(password, VIEWER_PASSWORD):
+                elif login_id in VIEWER_LOGIN_IDS and hmac.compare_digest(password, VIEWER_PASSWORD):
                     role = "viewer"
 
                 if role:
@@ -414,7 +416,7 @@ class Handler(BaseHTTPRequestHandler):
                     token, session = make_session(role)
                     self.send_json(
                         200,
-                        {"authenticated": True, "admin": role == "admin", "csrf": session["csrf"]},
+                        {"authenticated": True, "admin": role == "admin", "role": role, "csrf": session["csrf"]},
                         {"Set-Cookie": f"admin_session={token}; Path=/; Max-Age={SESSION_SECONDS}; HttpOnly; SameSite=Lax"},
                     )
                     return
