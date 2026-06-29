@@ -733,6 +733,7 @@
                 <th class="num">1차년</th>
                 <th class="num">2차년</th>
                 <th class="num">3차년</th>
+                <th class="num">4차년</th>
                 <th class="num">총수수료</th>
                 <th>구분</th>
                 <th class="admin-col">관리</th>
@@ -789,6 +790,7 @@
           <label class="field">1차년<input id="editYear1" type="number" step="0.001"></label>
           <label class="field">2차년<input id="editYear2" type="number" step="0.001"></label>
           <label class="field">3차년<input id="editYear3" type="number" step="0.001"></label>
+          <label class="field">4차년<input id="editYear4" type="number" step="0.001"></label>
         </div>
         <div class="modal-actions">
           <button class="secondary-button" type="button" data-close="editModal">취소</button>
@@ -926,6 +928,7 @@
           <td class="num">${formatNumber(row.year1)}</td>
           <td class="num">${formatNumber(row.year2)}</td>
           <td class="num">${formatNumber(row.year3)}</td>
+          <td class="num">${formatNumber(row.year4)}</td>
           <td class="num"><strong>${formatNumber(row.total)}</strong></td>
           <td class="sheet">${escapeHtml(row.source)}</td>
           <td class="admin-col">
@@ -971,7 +974,13 @@
       }
 
       nextRowId = 1;
-      state.rows = payload.rows.map((row) => ({ ...row, id: nextRowId++ })).sort((a, b) =>
+      state.rows = payload.rows.map((row) => {
+        const year1 = number(row.year1);
+        const year2 = number(row.year2);
+        const year3 = number(row.year3);
+        const year4 = number(row.year4);
+        return { ...row, year1, year2, year3, year4, total: year1 + year2 + year3 + year4, id: nextRowId++ };
+      }).sort((a, b) =>
         a.company.localeCompare(b.company, "ko") ||
         a.product.localeCompare(b.product, "ko") ||
         a.source.localeCompare(b.source, "ko")
@@ -981,7 +990,9 @@
       rebuildFilters(state.rows);
       applyFilters();
 
-      if (!state.rows.length) {
+      if (state.rows.length) {
+        notice.style.display = "none";
+      } else {
         notice.textContent = payload.message || "인식 가능한 수수료 표를 찾지 못했습니다. 생보 예시표 또는 손보 원장 형식의 헤더가 포함된 파일인지 확인해 주세요.";
         notice.style.display = "block";
         statusText.textContent = "표시할 데이터가 없습니다.";
@@ -1000,7 +1011,7 @@
       }
       if (payload.rows && payload.rows.length) {
         loadRowsFromPayload(payload);
-      } else if (payload.message) {
+      } else if (payload.message && payload.message !== "로그인 후 조회할 수 있습니다.") {
         notice.textContent = payload.message;
         notice.style.display = "block";
       }
@@ -1017,7 +1028,9 @@
       fileName.textContent = file.name;
       csrfToken.value = state.csrf;
       panel.classList.add("loading");
-      statusText.textContent = "엑셀 파일을 서버로 보내는 중입니다.";
+      notice.textContent = "엑셀 파일을 서버에 보내고 있습니다. 잠시만 기다려 주세요.";
+      notice.style.display = "block";
+      statusText.innerHTML = '<strong>업로드 중</strong> · 엑셀 파일을 서버에 보내고 있습니다.';
       const formData = new FormData();
       formData.append("file", file);
       fetch("/api/upload", {
@@ -1055,6 +1068,7 @@
       document.getElementById("editYear1").value = row.year1;
       document.getElementById("editYear2").value = row.year2;
       document.getElementById("editYear3").value = row.year3;
+      document.getElementById("editYear4").value = row.year4;
       openModal(editModal);
     }
 
@@ -1159,7 +1173,8 @@
       row.year1 = number(document.getElementById("editYear1").value);
       row.year2 = number(document.getElementById("editYear2").value);
       row.year3 = number(document.getElementById("editYear3").value);
-      row.total = row.year1 + row.year2 + row.year3;
+      row.year4 = number(document.getElementById("editYear4").value);
+      row.total = row.year1 + row.year2 + row.year3 + row.year4;
       rebuildFilters(state.rows);
       applyFilters();
       closeModal(editModal);

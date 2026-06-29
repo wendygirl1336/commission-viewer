@@ -38,6 +38,24 @@ def empty_upload(message: str = "", error: str = "") -> dict[str, Any]:
     return {"rows": [], "fileName": "", "message": message, "error": error}
 
 
+def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
+    def saved_num(value: Any) -> float:
+        try:
+            if value is None or value == "":
+                return 0.0
+            return float(str(value).replace(",", ""))
+        except Exception:
+            return 0.0
+
+    item = dict(row)
+    item["year1"] = saved_num(item.get("year1", 0))
+    item["year2"] = saved_num(item.get("year2", 0))
+    item["year3"] = saved_num(item.get("year3", 0))
+    item["year4"] = saved_num(item.get("year4", 0))
+    item["total"] = item["year1"] + item["year2"] + item["year3"] + item["year4"]
+    return item
+
+
 def load_saved_upload() -> dict[str, Any]:
     if not DATA_FILE.exists():
         return empty_upload()
@@ -45,7 +63,7 @@ def load_saved_upload() -> dict[str, Any]:
         data = json.loads(DATA_FILE.read_text(encoding="utf-8"))
         if isinstance(data, dict) and isinstance(data.get("rows"), list):
             return {
-                "rows": data.get("rows", []),
+                "rows": [normalize_row(row) for row in data.get("rows", []) if isinstance(row, dict)],
                 "fileName": data.get("fileName", ""),
                 "message": data.get("message", ""),
                 "error": data.get("error", ""),
@@ -120,6 +138,7 @@ def parse_life_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, A
     y1_col = find_year_col(rows, header_idx, ["1차년", "1차년도"])
     y2_col = find_year_col(rows, header_idx, ["2차년", "2차년도"])
     y3_col = find_year_col(rows, header_idx, ["3차년", "3차년도"])
+    y4_col = find_year_col(rows, header_idx, ["4차년", "4차년도"])
     if min(y1_col, y2_col, y3_col) < 0:
         return []
 
@@ -138,6 +157,7 @@ def parse_life_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, A
         year1 = num(row[y1_col] if y1_col < len(row) else 0)
         year2 = num(row[y2_col] if y2_col < len(row) else 0)
         year3 = num(row[y3_col] if y3_col < len(row) else 0)
+        year4 = num(row[y4_col] if y4_col >= 0 and y4_col < len(row) else 0)
         parsed.append(
             {
                 "company": company,
@@ -145,7 +165,8 @@ def parse_life_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, A
                 "year1": year1,
                 "year2": year2,
                 "year3": year3,
-                "total": year1 + year2 + year3,
+                "year4": year4,
+                "total": year1 + year2 + year3 + year4,
                 "source": sheet_name,
             }
         )
@@ -168,6 +189,7 @@ def parse_nonlife_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str
     y1_col = find_col(header, ["총환산"])
     y2_col = find_col(header, ["환산2차년도", "2차년도", "2차년"])
     y3_col = find_col(header, ["환산3차년도", "3차년도", "3차년"])
+    y4_col = find_col(header, ["환산4차년도", "4차년도", "4차년"])
     if min(company_col, product_col, y1_col, y2_col, y3_col) < 0:
         return []
 
@@ -180,17 +202,87 @@ def parse_nonlife_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str
         key = (company, product)
         item = grouped.setdefault(
             key,
-            {"company": company, "product": product, "year1": 0.0, "year2": 0.0, "year3": 0.0, "source": f"{sheet_name} 합산"},
+            {"company": company, "product": product, "year1": 0.0, "year2": 0.0, "year3": 0.0, "year4": 0.0, "source": f"{sheet_name} 합산"},
         )
         item["year1"] += num(row[y1_col] if y1_col < len(row) else 0)
         item["year2"] += num(row[y2_col] if y2_col < len(row) else 0)
         item["year3"] += num(row[y3_col] if y3_col < len(row) else 0)
+        item["year4"] += num(row[y4_col] if y4_col >= 0 and y4_col < len(row) else 0)
 
     result = []
     for item in grouped.values():
-        item["total"] = item["year1"] + item["year2"] + item["year3"]
+        item["total"] = item["year1"] + item["year2"] + item["year3"] + item.get("year4", 0.0)
         result.append(item)
     return result
+
+
+def parse_monthly_matrix_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, Any]]:
+    month_header_idx = -1
+    month_cols: list[tuple[int, str]] = []
+
+    for idx, row in enumerate(rows[:20]):
+        labels = [compact(cell) for cell in row]
+        candidate_cols = [col for col, label in enumerate(labels) if label == "월납"]
+        if not candidate_cols:
+            continue
+        company_row = rows[idx - 1] if idx > 0 else []
+        for col in candidate_cols:
+            company = ""
+            for offset in range(col, max(-1, col - 3), -1):
+                if offset < len(company_row):
+                    company = clean(company_row[offset])
+                    if company and company not in {"값", "보험사"}:
+                        break
+            if company and company not in {"값", "보험사"}:
+                month_cols.append((col, company))
+        if month_cols:
+            month_header_idx = idx
+            break
+
+    if month_header_idx < 0:
+        return []
+
+    first_month_col = min(col for col, _company in month_cols)
+    dimension_names = {"채널", "채널명", "본부", "본부명", "사업부", "사업부명", "사업단명", "지사명", "지점명"}
+    dimension_cols = [
+        col
+        for col, cell in enumerate(rows[month_header_idx][:first_month_col])
+        if compact(cell) in dimension_names
+    ]
+    if not dimension_cols and month_header_idx > 0:
+        dimension_cols = [
+            col
+            for col, cell in enumerate(rows[month_header_idx - 1][:first_month_col])
+            if compact(cell) in dimension_names
+        ]
+    if not dimension_cols:
+        dimension_cols = list(range(min(3, first_month_col)))
+
+    parsed: list[dict[str, Any]] = []
+    for row in rows[month_header_idx + 1 :]:
+        org_parts = [clean(row[col] if col < len(row) else "") for col in dimension_cols]
+        product = " / ".join(part for part in org_parts if part)
+        if not product:
+            continue
+        if any(skip in product for skip in ["총계", "합계"]) and len(product) <= 12:
+            product = product
+        for col, company in month_cols:
+            amount = num(row[col] if col < len(row) else 0)
+            if amount == 0:
+                continue
+            parsed.append(
+                {
+                    "company": company,
+                    "product": product,
+                    "year1": amount,
+                    "year2": 0.0,
+                    "year3": 0.0,
+                    "year4": 0.0,
+                    "total": amount,
+                    "source": sheet_name,
+                }
+            )
+    return parsed
 
 
 def parse_workbook(file_bytes: bytes) -> list[dict[str, Any]]:
@@ -202,8 +294,11 @@ def parse_workbook(file_bytes: bytes) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for ws in workbook.worksheets:
         values = [list(row) for row in ws.iter_rows(values_only=True)]
-        rows.extend(parse_life_sheet(values, ws.title))
-        rows.extend(parse_nonlife_sheet(values, ws.title))
+        parsed_sheet = parse_life_sheet(values, ws.title)
+        parsed_sheet.extend(parse_nonlife_sheet(values, ws.title))
+        if not parsed_sheet:
+            parsed_sheet.extend(parse_monthly_matrix_sheet(values, ws.title))
+        rows.extend(parsed_sheet)
     return [row for row in rows if row["company"] and row["product"]]
 
 
@@ -503,15 +598,15 @@ class Handler(BaseHTTPRequestHandler):
                 CURRENT_UPLOAD = {
                     "rows": rows,
                     "fileName": CURRENT_UPLOAD.get("fileName", "업로드된 엑셀 파일") if rows else "",
-                    "message": f"{source} 구분 데이터가 삭제되었습니다.",
+                    "message": "",
                     "error": "",
                 }
                 save_upload(CURRENT_UPLOAD)
-                self.send_json(200, {**CURRENT_UPLOAD, "removedRows": removed_count})
+                self.send_json(200, {**CURRENT_UPLOAD, "message": f"{source} 구분 데이터가 삭제되었습니다.", "removedRows": removed_count})
                 return
-            CURRENT_UPLOAD = empty_upload("업로드된 엑셀 데이터가 전체 삭제되었습니다.")
+            CURRENT_UPLOAD = empty_upload()
             save_upload(CURRENT_UPLOAD)
-            self.send_json(200, CURRENT_UPLOAD)
+            self.send_json(200, {**CURRENT_UPLOAD, "message": "업로드된 엑셀 데이터가 전체 삭제되었습니다."})
             return
 
         self.send_json(404, {"error": "Not found"})
