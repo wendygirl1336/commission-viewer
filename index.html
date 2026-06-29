@@ -540,6 +540,40 @@
       width: min(760px, 100%);
     }
 
+    .upload-result {
+      display: grid;
+      gap: 12px;
+      color: var(--ink);
+      line-height: 1.5;
+    }
+
+    .upload-result strong {
+      font-size: 18px;
+    }
+
+    .upload-result dl {
+      display: grid;
+      grid-template-columns: 88px minmax(0, 1fr);
+      gap: 8px 12px;
+      margin: 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fcfcfc;
+    }
+
+    .upload-result dt {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .upload-result dd {
+      margin: 0;
+      overflow-wrap: anywhere;
+      font-weight: 700;
+    }
+
     .calc-head {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
@@ -878,6 +912,31 @@
     </div>
   </div>
 
+  <div id="uploadResultModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="엑셀 업로드 완료">
+    <div class="modal">
+      <div class="modal-header">
+        <strong id="uploadResultTitle">엑셀 업로드 완료</strong>
+        <button class="close-button" type="button" data-close="uploadResultModal" aria-label="닫기">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="upload-result">
+          <strong id="uploadResultMessage">엑셀 파일을 불러왔습니다.</strong>
+          <dl>
+            <dt>파일명</dt>
+            <dd id="uploadResultFile">-</dd>
+            <dt>추가 행</dt>
+            <dd id="uploadResultAdded">0건</dd>
+            <dt>전체 행</dt>
+            <dd id="uploadResultTotal">0건</dd>
+          </dl>
+        </div>
+        <div class="modal-actions">
+          <button class="primary-button" type="button" data-close="uploadResultModal">확인</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const state = { rows: [], filtered: [], fileName: "", authenticated: false, admin: false, csrf: "" };
     let nextRowId = 1;
@@ -905,9 +964,15 @@
     const loginModal = document.getElementById("loginModal");
     const editModal = document.getElementById("editModal");
     const calcModal = document.getElementById("calcModal");
+    const uploadResultModal = document.getElementById("uploadResultModal");
     const loginForm = document.getElementById("loginForm");
     const editForm = document.getElementById("editForm");
     const loginError = document.getElementById("loginError");
+    const uploadResultTitle = document.getElementById("uploadResultTitle");
+    const uploadResultMessage = document.getElementById("uploadResultMessage");
+    const uploadResultFile = document.getElementById("uploadResultFile");
+    const uploadResultAdded = document.getElementById("uploadResultAdded");
+    const uploadResultTotal = document.getElementById("uploadResultTotal");
     const calcTitle = document.getElementById("calcTitle");
     const calcAmount = document.getElementById("calcAmount");
     const calcRows = document.getElementById("calcRows");
@@ -1023,6 +1088,15 @@
 
     function closeModal(modal) {
       modal.classList.remove("open");
+    }
+
+    function showUploadResult({ ok, file, addedRows, totalRows, message }) {
+      uploadResultTitle.textContent = ok ? "엑셀 업로드 완료" : "엑셀 업로드 실패";
+      uploadResultMessage.textContent = message;
+      uploadResultFile.textContent = file || "-";
+      uploadResultAdded.textContent = `${Number(addedRows || 0).toLocaleString("ko-KR")}건`;
+      uploadResultTotal.textContent = `${Number(totalRows || 0).toLocaleString("ko-KR")}건`;
+      openModal(uploadResultModal);
     }
 
     function rebuildFilters(rows) {
@@ -1172,6 +1246,13 @@
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error || "엑셀 파일을 읽지 못했습니다.");
           loadRowsFromPayload({ ...payload, fileName: file.name });
+          showUploadResult({
+            ok: true,
+            file: file.name,
+            addedRows: payload.addedRows || 0,
+            totalRows: state.rows.length,
+            message: "엑셀 파일을 불러왔습니다."
+          });
           notice.textContent = `${file.name} 데이터가 기존 목록에 추가되었습니다.`;
           notice.style.display = "block";
         })
@@ -1180,6 +1261,13 @@
           notice.textContent = `파일을 읽는 중 오류가 발생했습니다. ${error.message}`;
           notice.style.display = "block";
           statusText.textContent = "업로드 실패";
+          showUploadResult({
+            ok: false,
+            file: file.name,
+            addedRows: 0,
+            totalRows: state.rows.length,
+            message: `파일을 읽지 못했습니다. ${error.message}`
+          });
         })
         .finally(() => {
           panel.classList.remove("loading");
