@@ -345,6 +345,10 @@ def rate_percent(cell: Any) -> float:
 
 def sheet_component_cols(sheet_name: str, component_cols: list[int], first_year_col: int) -> list[int]:
     name = company_from_sheet_name(sheet_name)
+    if "\uc0bc\uc131\uc0dd\uba85" in name:
+        return [0, 1, 2]
+    if "\ub3d9\uc591\uc0dd\uba85" in name:
+        return [0, 1, 2, 3, 4]
     overrides: dict[str, list[int]] = {
         "메트라이프": [0, 1, 2, 3],
         "처브라이프": [0, 1, 2, 3],
@@ -355,6 +359,32 @@ def sheet_component_cols(sheet_name: str, component_cols: list[int], first_year_
         if keyword in name:
             return [col for col in cols if col < first_year_col]
     return component_cols
+
+
+def detail_sheet_override(sheet_name: str) -> dict[str, Any]:
+    name = company_from_sheet_name(sheet_name)
+    if "\uc0bc\uc131\uc0dd\uba85" in name:
+        return {"years": [15, 23, 29, -1], "total": 31, "components": [0, 1, 2]}
+    if "\ud55c\ud654\uc0dd\uba85" in name:
+        return {"years": [14, (15, 22), (23, 29), (30, 38)], "total": 39, "components": [0, 2, 3]}
+    if "\ub3d9\uc591\uc0dd\uba85" in name:
+        return {"years": [20, 26, 32, -1], "total": 33, "components": [0, 1, 2, 3, 4]}
+    if "\uad50\ubcf4\uc0dd\uba85" in name:
+        return {"years": [13, 20, 26, -1], "total": 27, "components": [0, 1, 2, 3]}
+    return {}
+
+
+def rate_value_from_spec(row: list[Any], spec: Any) -> float:
+    if isinstance(spec, tuple):
+        start, end = spec
+        return sum(rate_value_for(row, col) for col in range(start, end + 1))
+    if isinstance(spec, int):
+        return rate_value_for(row, spec)
+    return 0.0
+
+
+def rate_display_from_spec(row: list[Any], spec: Any) -> str:
+    return format_percent_point(rate_value_from_spec(row, spec))
 
 
 def build_product(sheet_name: str, parts: list[str]) -> str:
@@ -422,6 +452,7 @@ def find_detail_total_col(rows: list[list[Any]], header_idx: int) -> int:
 def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, Any]]:
     header_idx = -1
     year_cols = (-1, -1, -1, -1)
+    override = detail_sheet_override(sheet_name)
 
     for idx, _row in enumerate(rows[:35]):
         found_year_cols = find_detail_year_cols(rows, idx)
@@ -456,8 +487,11 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
 
     if not component_cols:
         component_cols = list(range(min(first_year_col, 4)))
+    if override.get("components"):
+        component_cols = [col for col in override["components"] if col < first_year_col]
     component_cols = sheet_component_cols(sheet_name, component_cols, first_year_col)
-    total_col = find_detail_total_col(rows, header_idx)
+    year_specs = override.get("years", list(year_cols))
+    total_col = override.get("total", find_detail_total_col(rows, header_idx))
 
     company = company_from_sheet_name(sheet_name)
     current_parts: dict[int, str] = {}
@@ -470,7 +504,9 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
             compact_cell = compact(cell)
             if not cell:
                 continue
-            if any(skip in compact_cell for skip in ["상품명", "상품구분", "구분", "납입기간", "납기"]):
+            if compact_cell in {"-", "\u2013", "\u2014"}:
+                continue
+            if compact_cell in {"상품명", "상품구분", "구분", "납입기간", "납기"}:
                 continue
             if re.fullmatch(r"[-+]?\d+(\.\d+)?", compact_cell):
                 continue
@@ -480,10 +516,10 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
         if not product:
             continue
 
-        year1 = rate_value_for(row, y1_col)
-        year2 = rate_value_for(row, y2_col)
-        year3 = rate_value_for(row, y3_col)
-        year4 = rate_value_for(row, y4_col)
+        year1 = rate_value_from_spec(row, year_specs[0])
+        year2 = rate_value_from_spec(row, year_specs[1])
+        year3 = rate_value_from_spec(row, year_specs[2])
+        year4 = rate_value_from_spec(row, year_specs[3])
         total_from_sheet = rate_value_for(row, total_col)
         has_any_rate_value = any(
             rate_value_for(row, col) != 0
@@ -503,9 +539,9 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
             "total": total,
             "source": sheet_name,
         }
-        for key, col in (("year1", y1_col), ("year2", y2_col), ("year3", y3_col), ("year4", y4_col)):
-            item[f"{key}Display"] = rate_display_for(row, col)
-        item["totalDisplay"] = rate_display_for(row, total_col) if total_col >= 0 else format_percent_point(item["total"])
+        for key, spec in (("year1", year_specs[0]), ("year2", year_specs[1]), ("year3", year_specs[2]), ("year4", year_specs[3])):
+            item[f"{key}Display"] = rate_display_from_spec(row, spec)
+        item["totalDisplay"] = rate_display_for(row, total_col) if total_col >= 0 and total_from_sheet != 0 else format_percent_point(item["total"])
         parsed.append(item)
 
     return parsed
@@ -580,7 +616,7 @@ def parse_life_commission_rate_sheet(rows: list[list[Any]], sheet_name: str) -> 
         }
         for key, col in (("year1", y1_col), ("year2", y2_col), ("year3", y3_col), ("year4", y4_col)):
             item[f"{key}Display"] = rate_display_for(row, col)
-        item["totalDisplay"] = rate_display_for(row, total_col) if total_col >= 0 else format_percent_point(item["total"])
+        item["totalDisplay"] = rate_display_for(row, total_col) if total_col >= 0 and total_from_sheet != 0 else format_percent_point(item["total"])
         parsed.append(item)
 
     return parsed

@@ -997,7 +997,7 @@
   </div>
 
   <script>
-    const state = { rows: [], filtered: [], fileName: "", authenticated: false, admin: false, csrf: "", sortKey: "company", sortDir: "asc" };
+    const state = { rows: [], filtered: [], fileName: "", authenticated: false, admin: false, csrf: "", sortKey: "company", sortDir: "asc", uploading: false };
     let nextRowId = 1;
     let activeCalcRow = null;
 
@@ -1223,6 +1223,10 @@
         return;
       }
       emptyState.style.display = "grid";
+      if (state.uploading) {
+        emptyState.innerHTML = "<div><strong>엑셀 파일을 읽는 중입니다</strong>서버에 업로드하고 표 데이터를 변환하고 있습니다.</div>";
+        return;
+      }
       if (!state.authenticated) {
         emptyState.innerHTML = "<div><strong>로그인이 필요합니다</strong>안내받은 계정으로 로그인하면 수수료 표가 표시됩니다.</div>";
       } else if (state.rows.length) {
@@ -1337,6 +1341,9 @@
       fileName.textContent = file.name;
       csrfToken.value = state.csrf;
       panel.classList.add("loading");
+      state.uploading = true;
+      state.filtered = [];
+      render();
       notice.textContent = "엑셀 파일을 서버에 보내고 있습니다. 잠시만 기다려 주세요.";
       notice.style.display = "block";
       statusText.innerHTML = '<strong>업로드 중</strong> · 엑셀 파일을 서버에 보내고 있습니다.';
@@ -1375,8 +1382,10 @@
           });
         })
         .finally(() => {
+          state.uploading = false;
           panel.classList.remove("loading");
           fileInput.value = "";
+          applyFilters();
         });
     }
 
