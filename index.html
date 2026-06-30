@@ -182,7 +182,7 @@
 
     .control-bar {
       display: grid;
-      grid-template-columns: minmax(260px, 1fr) 170px 170px auto;
+      grid-template-columns: minmax(300px, 1fr) 170px 170px auto auto;
       gap: 10px;
       align-items: center;
       padding: 18px;
@@ -386,6 +386,65 @@
       background: #f8f4ea;
       border-bottom: 1px solid var(--line);
       white-space: nowrap;
+    }
+
+    .sort-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: inherit;
+      gap: 6px;
+      height: 28px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .sort-button:hover,
+    .sort-button.active {
+      color: var(--point-dark);
+    }
+
+    .sort-indicator {
+      position: relative;
+      width: 14px;
+      height: 16px;
+      flex: 0 0 auto;
+      color: #b6a078;
+    }
+
+    .sort-indicator::before,
+    .sort-indicator::after {
+      content: "";
+      position: absolute;
+      left: 4px;
+      border-left: 4px solid transparent;
+      border-right: 4px solid transparent;
+      opacity: 0.4;
+    }
+
+    .sort-indicator::before {
+      top: 2px;
+      border-bottom: 5px solid currentColor;
+    }
+
+    .sort-indicator::after {
+      bottom: 2px;
+      border-top: 5px solid currentColor;
+    }
+
+    .sort-button.active.asc .sort-indicator::before,
+    .sort-button.active.desc .sort-indicator::after {
+      color: var(--point);
+      opacity: 1;
+    }
+
+    .sort-button.active.asc .sort-indicator::after,
+    .sort-button.active.desc .sort-indicator::before {
+      opacity: 0.16;
     }
 
     th,
@@ -789,14 +848,6 @@
           </div>
           <select id="companyFilter"><option value="">전체 회사</option></select>
           <select id="sourceFilter"><option value="">전체 구분</option></select>
-          <select id="sortSelect" aria-label="정렬">
-            <option value="company:asc">회사 오름차순</option>
-            <option value="company:desc">회사 내림차순</option>
-            <option value="product:asc">상품 오름차순</option>
-            <option value="product:desc">상품 내림차순</option>
-            <option value="total:asc">총수수료 오름차순</option>
-            <option value="total:desc">총수수료 내림차순</option>
-          </select>
           <form id="uploadForm" class="upload-form" action="/upload" method="post" enctype="multipart/form-data">
             <label class="upload-label" for="fileInput">엑셀 업로드</label>
             <input id="csrfToken" name="csrf" type="hidden">
@@ -819,13 +870,13 @@
           <table id="resultTable">
             <thead>
               <tr>
-                <th>회사</th>
-                <th>상품</th>
+                <th><button class="sort-button active asc" type="button" data-sort="company" aria-label="회사 정렬">회사<span class="sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button class="sort-button" type="button" data-sort="product" aria-label="상품 정렬">상품<span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th class="num">1차년</th>
                 <th class="num">2차년</th>
                 <th class="num">3차년</th>
                 <th class="num">4차년</th>
-                <th class="num">총수수료</th>
+                <th class="num"><button class="sort-button" type="button" data-sort="total" aria-label="총수수료 정렬">총수수료<span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th>구분</th>
                 <th class="admin-col">관리</th>
               </tr>
@@ -957,8 +1008,8 @@
     const searchInput = document.getElementById("searchInput");
     const companyFilter = document.getElementById("companyFilter");
     const sourceFilter = document.getElementById("sourceFilter");
-    const sortSelect = document.getElementById("sortSelect");
     const tableBody = document.getElementById("tableBody");
+    const sortButtons = [...document.querySelectorAll(".sort-button[data-sort]")];
     const emptyState = document.getElementById("emptyState");
     const notice = document.getElementById("notice");
     const fileName = document.getElementById("fileName");
@@ -999,13 +1050,13 @@
       return num.toLocaleString("ko-KR", { maximumFractionDigits: 0 });
     };
 
-    const formatCell = (row, key) => normalizePercentDisplay(row[`${key}Display`] || formatNumber(row[key]));
+    const formatCell = (row, key) => normalizePercentDisplay(row[`${key}Display`] || formatPercentRate(row[key]));
     const formatMoney = (value) => Math.round(number(value)).toLocaleString("ko-KR");
 
     const formatPercentRate = (value) => {
-      const rate = number(value) * 100;
+      const rate = number(value);
       if (Object.is(rate, 0) || Math.abs(rate) < 0.05) return "0%";
-      return `${rate.toLocaleString("ko-KR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+      return `${rate.toLocaleString("ko-KR", { maximumFractionDigits: 1 })}%`;
     };
 
     const normalizePercentDisplay = (value) => {
@@ -1047,7 +1098,7 @@
     }
 
     function rateText(row, key) {
-      return normalizePercentDisplay(row[`${key}Display`] || (hasPercentDisplay(row) ? formatPercentRate(row[key]) : formatNumber(row[key])));
+      return normalizePercentDisplay(row[`${key}Display`] || formatPercentRate(row[key]));
     }
 
     function escapeHtml(value) {
@@ -1156,6 +1207,16 @@
       });
     }
 
+    function renderSortButtons() {
+      sortButtons.forEach((button) => {
+        const isActive = button.dataset.sort === state.sortKey;
+        button.classList.toggle("active", isActive);
+        button.classList.toggle("asc", isActive && state.sortDir === "asc");
+        button.classList.toggle("desc", isActive && state.sortDir === "desc");
+        button.setAttribute("aria-sort", isActive ? (state.sortDir === "asc" ? "ascending" : "descending") : "none");
+      });
+    }
+
     function updateEmptyState() {
       if (state.filtered.length) {
         emptyState.style.display = "none";
@@ -1194,6 +1255,7 @@
       `).join("");
 
       updateEmptyState();
+      renderSortButtons();
       if (state.fileName && state.rows.length) {
         statusText.innerHTML = `<strong>${state.filtered.length.toLocaleString("ko-KR")}</strong>건 표시 중${state.admin ? " · 관리자 수정 가능" : ""}`;
       }
@@ -1339,7 +1401,7 @@
       const hasAmount = amount > 0;
       calcError.textContent = calcAmount.value && !hasAmount ? "금액을 숫자 또는 10만원 형식으로 입력해 주세요." : "";
       const years = ["year1", "year2", "year3", "year4"];
-      const calculated = Object.fromEntries(years.map((key) => [key, amount * number(activeCalcRow[key])]));
+      const calculated = Object.fromEntries(years.map((key) => [key, amount * number(activeCalcRow[key]) / 100]));
       const totalCalculated = years.reduce((sum, key) => sum + calculated[key], 0);
       const labels = { year1: "1차년", year2: "2차년", year3: "3차년", year4: "4차년" };
       calcRows.innerHTML = years.map((key) => `
@@ -1565,11 +1627,17 @@
     searchInput.addEventListener("input", applyFilters);
     companyFilter.addEventListener("change", applyFilters);
     sourceFilter.addEventListener("change", applyFilters);
-    sortSelect.addEventListener("change", () => {
-      const [key, dir] = sortSelect.value.split(":");
-      state.sortKey = key || "company";
-      state.sortDir = dir || "asc";
-      applyFilters();
+    sortButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        const key = button.dataset.sort || "company";
+        if (state.sortKey === key) {
+          state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+        } else {
+          state.sortKey = key;
+          state.sortDir = "asc";
+        }
+        applyFilters();
+      });
     });
 
     window.addEventListener("load", () => {

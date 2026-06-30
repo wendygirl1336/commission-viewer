@@ -66,7 +66,7 @@ def load_saved_upload() -> dict[str, Any]:
         data = json.loads(DATA_FILE.read_text(encoding="utf-8"))
         if isinstance(data, dict) and isinstance(data.get("rows"), list):
             return {
-                "rows": [normalize_row(row) for row in data.get("rows", []) if isinstance(row, dict)],
+                "rows": [normalize_rate_displays(normalize_row(row)) for row in data.get("rows", []) if isinstance(row, dict)],
                 "fileName": data.get("fileName", ""),
                 "message": data.get("message", ""),
                 "error": data.get("error", ""),
@@ -78,9 +78,6 @@ def load_saved_upload() -> dict[str, Any]:
 
 def save_upload(data: dict[str, Any]) -> None:
     DATA_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-
-
-CURRENT_UPLOAD: dict[str, Any] = load_saved_upload()
 
 
 def clean(value: Any) -> str:
@@ -108,8 +105,45 @@ def is_percent_format(number_format: str | None) -> bool:
 
 def format_percent(value: Any) -> str:
     amount = num(value) * 100
-    text = f"{amount:.1f}"
+    if abs(amount) < 0.05:
+        return "0%"
+    text = f"{amount:.1f}".rstrip("0").rstrip(".")
     return f"{text}%"
+
+
+def format_percent_point(value: Any) -> str:
+    amount = num(value)
+    if abs(amount) < 0.05:
+        return "0%"
+    text = f"{amount:.1f}".rstrip("0").rstrip(".")
+    return f"{text}%"
+
+
+def parse_percent_display(value: Any) -> float | None:
+    display = clean(value)
+    if not display.endswith("%"):
+        return None
+    try:
+        return float(display[:-1].replace(",", "").strip())
+    except ValueError:
+        return None
+
+
+def normalize_rate_displays(row: dict[str, Any]) -> dict[str, Any]:
+    item = dict(row)
+    total = 0.0
+    for key in ("year1", "year2", "year3", "year4"):
+        display_value = parse_percent_display(item.get(f"{key}Display", ""))
+        value = display_value if display_value is not None else num(item.get(key, 0))
+        item[key] = value
+        total += value
+        item[f"{key}Display"] = format_percent_point(value)
+    item["total"] = total
+    item["totalDisplay"] = format_percent_point(total)
+    return item
+
+
+CURRENT_UPLOAD: dict[str, Any] = load_saved_upload()
 
 
 def cell_value(cell: Any) -> Any:
@@ -131,6 +165,22 @@ def display_for(row: list[Any], col: int) -> str:
     if col < 0 or col >= len(row):
         return ""
     return cell_display(row[col])
+
+
+def rate_value_for(row: list[Any], col: int) -> float:
+    if col < 0 or col >= len(row):
+        return 0.0
+    cell = row[col]
+    value = num(cell_value(cell))
+    if hasattr(cell, "number_format") and is_percent_format(cell.number_format):
+        return value * 100
+    return value
+
+
+def rate_display_for(row: list[Any], col: int) -> str:
+    if col < 0 or col >= len(row):
+        return "0%"
+    return format_percent_point(rate_value_for(row, col))
 
 
 def row_value(row: list[Any], col: int) -> Any:
@@ -404,25 +454,27 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
         if not product:
             continue
 
-        year1 = num(cell_value(row[y1_col]) if y1_col < len(row) else 0)
-        year2 = num(cell_value(row[y2_col]) if y2_col < len(row) else 0)
-        year3 = num(cell_value(row[y3_col]) if y3_col < len(row) else 0)
-        year4 = num(cell_value(row[y4_col]) if y4_col >= 0 and y4_col < len(row) else 0)
+        year1 = rate_value_for(row, y1_col)
+        year2 = rate_value_for(row, y2_col)
+        year3 = rate_value_for(row, y3_col)
+        year4 = rate_value_for(row, y4_col)
         if year1 == 0 and year2 == 0 and year3 == 0 and year4 == 0:
             continue
 
-        parsed.append(
-            {
-                "company": company,
-                "product": product,
-                "year1": year1,
-                "year2": year2,
-                "year3": year3,
-                "year4": year4,
-                "total": year1 + year2 + year3 + year4,
-                "source": sheet_name,
-            }
-        )
+        item = {
+            "company": company,
+            "product": product,
+            "year1": year1,
+            "year2": year2,
+            "year3": year3,
+            "year4": year4,
+            "total": year1 + year2 + year3 + year4,
+            "source": sheet_name,
+        }
+        for key, col in (("year1", y1_col), ("year2", y2_col), ("year3", y3_col), ("year4", y4_col)):
+            item[f"{key}Display"] = rate_display_for(row, col)
+        item["totalDisplay"] = format_percent_point(item["total"])
+        parsed.append(item)
 
     return parsed
 
@@ -469,25 +521,27 @@ def parse_life_commission_rate_sheet(rows: list[list[Any]], sheet_name: str) -> 
         if not product or "상품명" in compact(product) or "CommissionRate" in compact(product):
             continue
 
-        year1 = rate_percent(row[y1_col] if y1_col < len(row) else 0)
-        year2 = rate_percent(row[y2_col] if y2_col < len(row) else 0)
-        year3 = rate_percent(row[y3_col] if y3_col < len(row) else 0)
-        year4 = rate_percent(row[y4_col] if y4_col >= 0 and y4_col < len(row) else 0)
+        year1 = rate_value_for(row, y1_col)
+        year2 = rate_value_for(row, y2_col)
+        year3 = rate_value_for(row, y3_col)
+        year4 = rate_value_for(row, y4_col)
         if year1 == 0 and year2 == 0 and year3 == 0 and year4 == 0:
             continue
 
-        parsed.append(
-            {
-                "company": company,
-                "product": product,
-                "year1": year1,
-                "year2": year2,
-                "year3": year3,
-                "year4": year4,
-                "total": year1 + year2 + year3 + year4,
-                "source": sheet_name,
-            }
-        )
+        item = {
+            "company": company,
+            "product": product,
+            "year1": year1,
+            "year2": year2,
+            "year3": year3,
+            "year4": year4,
+            "total": year1 + year2 + year3 + year4,
+            "source": sheet_name,
+        }
+        for key, col in (("year1", y1_col), ("year2", y2_col), ("year3", y3_col), ("year4", y4_col)):
+            item[f"{key}Display"] = rate_display_for(row, col)
+        item["totalDisplay"] = format_percent_point(item["total"])
+        parsed.append(item)
 
     return parsed
 
@@ -837,7 +891,7 @@ def parse_workbook(file_bytes: bytes) -> list[dict[str, Any]]:
         if not parsed_sheet:
             parsed_sheet.extend(parse_generic_rate_sheet(values, ws.title))
         rows.extend(parsed_sheet)
-    return [row for row in rows if row["company"] and row["product"]]
+    return [normalize_rate_displays(row) for row in rows if row["company"] and row["product"]]
 
 
 def parse_upload(body: bytes, content_type: str) -> tuple[bytes, dict[str, str]]:
