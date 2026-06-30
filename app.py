@@ -246,7 +246,7 @@ def is_product_component_label(label: str) -> bool:
 
 
 def find_commission_rate_year_cols(rows: list[list[Any]], header_idx: int) -> tuple[int, int, int, int]:
-    header = [compact(cell) for cell in rows[header_idx]]
+    header = [compact(cell_value(cell)) for cell in rows[header_idx]]
     rate_col = -1
     for idx, label in enumerate(header):
         if "CommissionRate" in label or "수수료율" in label:
@@ -265,7 +265,7 @@ def find_commission_rate_year_cols(rows: list[list[Any]], header_idx: int) -> tu
     ]
 
     for row in rows[header_idx : min(len(rows), header_idx + 8)]:
-        labels = [compact(cell) for cell in row]
+        labels = [compact(cell_value(cell)) for cell in row]
         found = [-1, -1, -1, -1]
         for col in range(rate_col, max_col):
             label = labels[col] if col < len(labels) else ""
@@ -276,19 +276,39 @@ def find_commission_rate_year_cols(rows: list[list[Any]], header_idx: int) -> tu
             year_cols = found
             break
 
-    if year_cols[0] < 0 or year_cols[1] < 0 or year_cols[2] < 0:
-        year_cols[0] = rate_col
-        year_cols[1] = rate_col + 1
-        year_cols[2] = rate_col + 2
-        year_cols[3] = rate_col + 3 if rate_col + 3 < max_col else -1
     return tuple(year_cols)  # type: ignore[return-value]
 
 
-def rate_percent(value: Any) -> float:
+def rate_percent(cell: Any) -> float:
+    value = cell_value(cell)
     rate = num(value)
-    if rate and abs(rate) < 1:
+    if rate and abs(rate) < 1 and hasattr(cell, "number_format") and is_percent_format(cell.number_format):
         return rate * 100
     return rate
+
+
+def sheet_component_cols(sheet_name: str, component_cols: list[int], first_year_col: int) -> list[int]:
+    name = company_from_sheet_name(sheet_name)
+    overrides: dict[str, list[int]] = {
+        "메트라이프": [0, 1, 2, 3],
+        "처브라이프": [0, 1, 2, 3],
+        "흥국생명": [0, 1, 2],
+        "카디프생명": [0, 1, 2, 3],
+    }
+    for keyword, cols in overrides.items():
+        if keyword in name:
+            return [col for col in cols if col < first_year_col]
+    return component_cols
+
+
+def build_product(sheet_name: str, parts: list[str]) -> str:
+    parts = [part for part in parts if part]
+    if not parts:
+        return ""
+    company = company_from_sheet_name(sheet_name)
+    if "흥국생명" in company and len(parts) >= 3:
+        return f"{parts[0]}({parts[1]} {parts[2]})"
+    return " / ".join(parts)
 
 
 def find_detail_year_cols(rows: list[list[Any]], header_idx: int) -> tuple[int, int, int, int]:
@@ -298,16 +318,19 @@ def find_detail_year_cols(rows: list[list[Any]], header_idx: int) -> tuple[int, 
         matches: list[int] = []
         for row in search_rows:
             for col, cell in enumerate(row):
-                label = compact(cell)
+                label = compact(cell_value(cell))
                 if not label:
                     continue
-                has_year = f"{year}차년" in label or f"{year}차년도" in label
+                has_year = bool(re.search(rf"{year}(?:~\d+)?차년(?:도)?", label))
                 has_first_year = year == 1 and ("초년도" in label or "초년" in label)
-                if not has_year and not has_first_year:
+                has_first_year_summary = year == 1 and any(
+                    token in label for token in ["익월계", "익월計", "익월총", "초년도계", "초년도計"]
+                )
+                if not has_year and not has_first_year and not has_first_year_summary:
                     continue
                 if "초과" in label:
                     continue
-                has_total = "계" in label or "計" in label
+                has_total = "계" in label or "計" in label or has_first_year_summary
                 if require_total and not has_total:
                     continue
                 matches.append(col)
@@ -336,7 +359,7 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
         if first_year_col <= 0:
             continue
         has_product_label = any(
-            is_product_component_label(compact(cell))
+            is_product_component_label(compact(cell_value(cell)))
             for row in header_rows
             for cell in row[:first_year_col]
         )
@@ -352,12 +375,13 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
     header_rows = rows[header_idx : min(len(rows), header_idx + 6)]
     component_cols: list[int] = []
     for col in range(first_year_col):
-        labels = [compact(row[col] if col < len(row) else "") for row in header_rows]
+        labels = [compact(cell_value(row[col]) if col < len(row) else "") for row in header_rows]
         if any(is_product_component_label(label) for label in labels):
             component_cols.append(col)
 
     if not component_cols:
         component_cols = list(range(min(first_year_col, 4)))
+    component_cols = sheet_component_cols(sheet_name, component_cols, first_year_col)
 
     company = company_from_sheet_name(sheet_name)
     current_parts: dict[int, str] = {}
@@ -366,7 +390,7 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
 
     for row in rows[header_idx + len(header_rows) :]:
         for col in component_cols:
-            cell = clean(row[col] if col < len(row) else "")
+            cell = clean(cell_value(row[col]) if col < len(row) else "")
             compact_cell = compact(cell)
             if not cell:
                 continue
@@ -376,14 +400,14 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
                 continue
             current_parts[col] = cell
 
-        product = " / ".join(current_parts.get(col, "") for col in component_cols if current_parts.get(col, ""))
+        product = build_product(sheet_name, [current_parts.get(col, "") for col in component_cols])
         if not product:
             continue
 
-        year1 = num(row[y1_col] if y1_col < len(row) else 0)
-        year2 = num(row[y2_col] if y2_col < len(row) else 0)
-        year3 = num(row[y3_col] if y3_col < len(row) else 0)
-        year4 = num(row[y4_col] if y4_col >= 0 and y4_col < len(row) else 0)
+        year1 = num(cell_value(row[y1_col]) if y1_col < len(row) else 0)
+        year2 = num(cell_value(row[y2_col]) if y2_col < len(row) else 0)
+        year3 = num(cell_value(row[y3_col]) if y3_col < len(row) else 0)
+        year4 = num(cell_value(row[y4_col]) if y4_col >= 0 and y4_col < len(row) else 0)
         if year1 == 0 and year2 == 0 and year3 == 0 and year4 == 0:
             continue
 
@@ -408,7 +432,7 @@ def parse_life_commission_rate_sheet(rows: list[list[Any]], sheet_name: str) -> 
     component_cols: list[tuple[int, str]] = []
 
     for idx, row in enumerate(rows[:30]):
-        labels = [compact(cell) for cell in row]
+        labels = [compact(cell_value(cell)) for cell in row]
         if "상품명" in labels and any("CommissionRate" in label or "수수료율" in label for label in labels):
             header_idx = idx
             component_cols = [
@@ -421,6 +445,11 @@ def parse_life_commission_rate_sheet(rows: list[list[Any]], sheet_name: str) -> 
     if header_idx < 0 or not component_cols:
         return []
 
+    override_cols = sheet_component_cols(sheet_name, [col_idx for col_idx, _label in component_cols], len(rows[header_idx]))
+    if override_cols:
+        label_by_col = {col_idx: label for col_idx, label in component_cols}
+        component_cols = [(col_idx, label_by_col.get(col_idx, "")) for col_idx in override_cols]
+
     y1_col, y2_col, y3_col, y4_col = find_commission_rate_year_cols(rows, header_idx)
     if min(y1_col, y2_col, y3_col) < 0:
         return []
@@ -431,12 +460,12 @@ def parse_life_commission_rate_sheet(rows: list[list[Any]], sheet_name: str) -> 
 
     for row in rows[header_idx + 1 :]:
         for col_idx, _label in component_cols:
-            cell = clean(row[col_idx] if col_idx < len(row) else "")
+            cell = clean(cell_value(row[col_idx]) if col_idx < len(row) else "")
             if cell:
                 current_parts[col_idx] = cell
 
         parts = [current_parts.get(col_idx, "") for col_idx, _label in component_cols]
-        product = " / ".join(part for part in parts if part)
+        product = build_product(sheet_name, parts)
         if not product or "상품명" in compact(product) or "CommissionRate" in compact(product):
             continue
 

@@ -789,6 +789,14 @@
           </div>
           <select id="companyFilter"><option value="">전체 회사</option></select>
           <select id="sourceFilter"><option value="">전체 구분</option></select>
+          <select id="sortSelect" aria-label="정렬">
+            <option value="company:asc">회사 오름차순</option>
+            <option value="company:desc">회사 내림차순</option>
+            <option value="product:asc">상품 오름차순</option>
+            <option value="product:desc">상품 내림차순</option>
+            <option value="total:asc">총수수료 오름차순</option>
+            <option value="total:desc">총수수료 내림차순</option>
+          </select>
           <form id="uploadForm" class="upload-form" action="/upload" method="post" enctype="multipart/form-data">
             <label class="upload-label" for="fileInput">엑셀 업로드</label>
             <input id="csrfToken" name="csrf" type="hidden">
@@ -836,10 +844,10 @@
     </main>
   </div>
 
-  <div id="loginModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="관리자 로그인">
+  <div id="loginModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-label="로그인">
     <div class="modal">
       <div class="modal-header">
-        <strong>관리자 로그인</strong>
+        <strong>로그인</strong>
         <button class="close-button" type="button" data-close="loginModal" aria-label="닫기">&times;</button>
       </div>
       <form id="loginForm" class="modal-body">
@@ -938,7 +946,7 @@
   </div>
 
   <script>
-    const state = { rows: [], filtered: [], fileName: "", authenticated: false, admin: false, csrf: "" };
+    const state = { rows: [], filtered: [], fileName: "", authenticated: false, admin: false, csrf: "", sortKey: "company", sortDir: "asc" };
     let nextRowId = 1;
     let activeCalcRow = null;
 
@@ -949,6 +957,7 @@
     const searchInput = document.getElementById("searchInput");
     const companyFilter = document.getElementById("companyFilter");
     const sourceFilter = document.getElementById("sourceFilter");
+    const sortSelect = document.getElementById("sortSelect");
     const tableBody = document.getElementById("tableBody");
     const emptyState = document.getElementById("emptyState");
     const notice = document.getElementById("notice");
@@ -990,12 +999,18 @@
       return num.toLocaleString("ko-KR", { maximumFractionDigits: 0 });
     };
 
-    const formatCell = (row, key) => row[`${key}Display`] || formatNumber(row[key]);
+    const formatCell = (row, key) => normalizePercentDisplay(row[`${key}Display`] || formatNumber(row[key]));
     const formatMoney = (value) => Math.round(number(value)).toLocaleString("ko-KR");
 
     const formatPercentRate = (value) => {
       const rate = number(value) * 100;
+      if (Object.is(rate, 0) || Math.abs(rate) < 0.05) return "0%";
       return `${rate.toLocaleString("ko-KR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+    };
+
+    const normalizePercentDisplay = (value) => {
+      const display = text(value);
+      return /^0(?:\.0+)?%$/.test(display) ? "0%" : display;
     };
 
     const hasPercentDisplay = (row) =>
@@ -1032,7 +1047,7 @@
     }
 
     function rateText(row, key) {
-      return row[`${key}Display`] || (hasPercentDisplay(row) ? formatPercentRate(row[key]) : formatNumber(row[key]));
+      return normalizePercentDisplay(row[`${key}Display`] || (hasPercentDisplay(row) ? formatPercentRate(row[key]) : formatNumber(row[key])));
     }
 
     function escapeHtml(value) {
@@ -1060,7 +1075,7 @@
           ? "조회 모드"
           : "로그인 필요";
       loginMenuButton.hidden = state.admin;
-      loginMenuButton.textContent = state.authenticated ? "관리자 로그인" : "로그인";
+      loginMenuButton.textContent = "로그인";
       viewerModeButton.hidden = !state.admin;
       logoutMenuButton.hidden = !state.authenticated;
       render();
@@ -1121,7 +1136,39 @@
         const matchesSource = !source || row.source === source;
         return matchesQuery && matchesCompany && matchesSource;
       });
+      sortRows(state.filtered);
       render();
+    }
+
+    function sortRows(rows) {
+      const direction = state.sortDir === "desc" ? -1 : 1;
+      rows.sort((a, b) => {
+        if (state.sortKey === "total") {
+          const diff = number(a.total) - number(b.total);
+          if (diff) return diff * direction;
+        } else {
+          const diff = text(a[state.sortKey]).localeCompare(text(b[state.sortKey]), "ko");
+          if (diff) return diff * direction;
+        }
+        return text(a.company).localeCompare(text(b.company), "ko")
+          || text(a.product).localeCompare(text(b.product), "ko")
+          || text(a.source).localeCompare(text(b.source), "ko");
+      });
+    }
+
+    function updateEmptyState() {
+      if (state.filtered.length) {
+        emptyState.style.display = "none";
+        return;
+      }
+      emptyState.style.display = "grid";
+      if (!state.authenticated) {
+        emptyState.innerHTML = "<div><strong>로그인이 필요합니다</strong>안내받은 계정으로 로그인하면 수수료 표가 표시됩니다.</div>";
+      } else if (state.rows.length) {
+        emptyState.innerHTML = "<div><strong>검색 결과가 없습니다</strong>검색어 또는 필터를 다시 선택해 주세요.</div>";
+      } else {
+        emptyState.innerHTML = "<div><strong>표시할 데이터가 없습니다</strong>관리자 계정으로 로그인해 엑셀 파일을 업로드해 주세요.</div>";
+      }
     }
 
     function render() {
@@ -1146,7 +1193,7 @@
         </tr>
       `).join("");
 
-      emptyState.style.display = state.filtered.length ? "none" : "grid";
+      updateEmptyState();
       if (state.fileName && state.rows.length) {
         statusText.innerHTML = `<strong>${state.filtered.length.toLocaleString("ko-KR")}</strong>건 표시 중${state.admin ? " · 관리자 수정 가능" : ""}`;
       }
@@ -1184,11 +1231,7 @@
           normalized.totalDisplay = formatPercentRate(total);
         }
         return normalized;
-      }).sort((a, b) =>
-        a.company.localeCompare(b.company, "ko") ||
-        a.product.localeCompare(b.product, "ko") ||
-        a.source.localeCompare(b.source, "ko")
-      );
+      });
       state.fileName = payload.fileName || "업로드된 엑셀 파일";
       fileName.textContent = state.fileName;
       rebuildFilters(state.rows);
@@ -1522,6 +1565,12 @@
     searchInput.addEventListener("input", applyFilters);
     companyFilter.addEventListener("change", applyFilters);
     sourceFilter.addEventListener("change", applyFilters);
+    sortSelect.addEventListener("change", () => {
+      const [key, dir] = sortSelect.value.split(":");
+      state.sortKey = key || "company";
+      state.sortDir = dir || "asc";
+      applyFilters();
+    });
 
     window.addEventListener("load", () => {
       loadInitialUpload();
