@@ -214,6 +214,255 @@ def parse_life_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, A
     return parsed
 
 
+def company_from_sheet_name(sheet_name: str) -> str:
+    return re.sub(r"\(.+\)$", "", sheet_name).strip() or sheet_name
+
+
+def is_product_component_label(label: str) -> bool:
+    return (
+        label
+        in {
+            "보종",
+            "상품명",
+            "상품구분",
+            "구분",
+            "구분",
+            "납입기간",
+            "납기",
+            "가입금액구간",
+            "가입금액",
+            "가입연령",
+            "만기",
+            "적용기준",
+            "상품가입형태",
+            "상품유형",
+        }
+        or "보장금액" in label
+        or "보험료" in label
+        or "보험기간" in label
+        or "납입" in label
+        or "납" in label
+    )
+
+
+def find_commission_rate_year_cols(rows: list[list[Any]], header_idx: int) -> tuple[int, int, int, int]:
+    header = [compact(cell) for cell in rows[header_idx]]
+    rate_col = -1
+    for idx, label in enumerate(header):
+        if "CommissionRate" in label or "수수료율" in label:
+            rate_col = idx
+            break
+    if rate_col < 0:
+        return -1, -1, -1, -1
+
+    max_col = min(max(len(row) for row in rows[header_idx : min(len(rows), header_idx + 8)]), rate_col + 8)
+    year_cols = [-1, -1, -1, -1]
+    exact_labels = [
+        {"1차년", "1차년도"},
+        {"2차년", "2차년도"},
+        {"3차년", "3차년도"},
+        {"4차년", "4차년도", "4차년이후"},
+    ]
+
+    for row in rows[header_idx : min(len(rows), header_idx + 8)]:
+        labels = [compact(cell) for cell in row]
+        found = [-1, -1, -1, -1]
+        for col in range(rate_col, max_col):
+            label = labels[col] if col < len(labels) else ""
+            for year_idx, candidates in enumerate(exact_labels):
+                if label in candidates:
+                    found[year_idx] = col
+        if found[0] >= 0 and found[1] >= 0 and found[2] >= 0:
+            year_cols = found
+            break
+
+    if year_cols[0] < 0 or year_cols[1] < 0 or year_cols[2] < 0:
+        year_cols[0] = rate_col
+        year_cols[1] = rate_col + 1
+        year_cols[2] = rate_col + 2
+        year_cols[3] = rate_col + 3 if rate_col + 3 < max_col else -1
+    return tuple(year_cols)  # type: ignore[return-value]
+
+
+def rate_percent(value: Any) -> float:
+    rate = num(value)
+    if rate and abs(rate) < 1:
+        return rate * 100
+    return rate
+
+
+def find_detail_year_cols(rows: list[list[Any]], header_idx: int) -> tuple[int, int, int, int]:
+    search_rows = rows[header_idx : min(len(rows), header_idx + 6)]
+
+    def matching_cols(year: int, require_total: bool) -> list[int]:
+        matches: list[int] = []
+        for row in search_rows:
+            for col, cell in enumerate(row):
+                label = compact(cell)
+                if not label:
+                    continue
+                has_year = f"{year}차년" in label or f"{year}차년도" in label
+                has_first_year = year == 1 and ("초년도" in label or "초년" in label)
+                if not has_year and not has_first_year:
+                    continue
+                if "초과" in label:
+                    continue
+                has_total = "계" in label or "計" in label
+                if require_total and not has_total:
+                    continue
+                matches.append(col)
+        return matches
+
+    cols: list[int] = []
+    for year in [1, 2, 3, 4]:
+        preferred = matching_cols(year, True)
+        fallback = matching_cols(year, False)
+        cols.append((preferred or fallback or [-1])[-1])
+    return tuple(cols)  # type: ignore[return-value]
+
+
+def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, Any]]:
+    header_idx = -1
+    year_cols = (-1, -1, -1, -1)
+
+    for idx, _row in enumerate(rows[:35]):
+        found_year_cols = find_detail_year_cols(rows, idx)
+        if min(found_year_cols[:3]) < 0:
+            continue
+        if not (found_year_cols[0] <= found_year_cols[1] <= found_year_cols[2]):
+            continue
+        header_rows = rows[idx : min(len(rows), idx + 6)]
+        first_year_col = min(col for col in found_year_cols[:3] if col >= 0)
+        if first_year_col <= 0:
+            continue
+        has_product_label = any(
+            is_product_component_label(compact(cell))
+            for row in header_rows
+            for cell in row[:first_year_col]
+        )
+        if has_product_label:
+            header_idx = idx
+            year_cols = found_year_cols
+            break
+
+    if header_idx < 0:
+        return []
+
+    first_year_col = min(col for col in year_cols[:3] if col >= 0)
+    header_rows = rows[header_idx : min(len(rows), header_idx + 6)]
+    component_cols: list[int] = []
+    for col in range(first_year_col):
+        labels = [compact(row[col] if col < len(row) else "") for row in header_rows]
+        if any(is_product_component_label(label) for label in labels):
+            component_cols.append(col)
+
+    if not component_cols:
+        component_cols = list(range(min(first_year_col, 4)))
+
+    company = company_from_sheet_name(sheet_name)
+    current_parts: dict[int, str] = {}
+    parsed: list[dict[str, Any]] = []
+    y1_col, y2_col, y3_col, y4_col = year_cols
+
+    for row in rows[header_idx + len(header_rows) :]:
+        for col in component_cols:
+            cell = clean(row[col] if col < len(row) else "")
+            compact_cell = compact(cell)
+            if not cell:
+                continue
+            if any(skip in compact_cell for skip in ["상품명", "상품구분", "구분", "납입기간", "납기"]):
+                continue
+            if re.fullmatch(r"[-+]?\d+(\.\d+)?", compact_cell):
+                continue
+            current_parts[col] = cell
+
+        product = " / ".join(current_parts.get(col, "") for col in component_cols if current_parts.get(col, ""))
+        if not product:
+            continue
+
+        year1 = num(row[y1_col] if y1_col < len(row) else 0)
+        year2 = num(row[y2_col] if y2_col < len(row) else 0)
+        year3 = num(row[y3_col] if y3_col < len(row) else 0)
+        year4 = num(row[y4_col] if y4_col >= 0 and y4_col < len(row) else 0)
+        if year1 == 0 and year2 == 0 and year3 == 0 and year4 == 0:
+            continue
+
+        parsed.append(
+            {
+                "company": company,
+                "product": product,
+                "year1": year1,
+                "year2": year2,
+                "year3": year3,
+                "year4": year4,
+                "total": year1 + year2 + year3 + year4,
+                "source": sheet_name,
+            }
+        )
+
+    return parsed
+
+
+def parse_life_commission_rate_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, Any]]:
+    header_idx = -1
+    component_cols: list[tuple[int, str]] = []
+
+    for idx, row in enumerate(rows[:30]):
+        labels = [compact(cell) for cell in row]
+        if "상품명" in labels and any("CommissionRate" in label or "수수료율" in label for label in labels):
+            header_idx = idx
+            component_cols = [
+                (col_idx, label)
+                for col_idx, label in enumerate(labels)
+                if is_product_component_label(label)
+            ]
+            break
+
+    if header_idx < 0 or not component_cols:
+        return []
+
+    y1_col, y2_col, y3_col, y4_col = find_commission_rate_year_cols(rows, header_idx)
+    if min(y1_col, y2_col, y3_col) < 0:
+        return []
+
+    company = company_from_sheet_name(sheet_name)
+    current_parts: dict[int, str] = {}
+    parsed: list[dict[str, Any]] = []
+
+    for row in rows[header_idx + 1 :]:
+        for col_idx, _label in component_cols:
+            cell = clean(row[col_idx] if col_idx < len(row) else "")
+            if cell:
+                current_parts[col_idx] = cell
+
+        parts = [current_parts.get(col_idx, "") for col_idx, _label in component_cols]
+        product = " / ".join(part for part in parts if part)
+        if not product or "상품명" in compact(product) or "CommissionRate" in compact(product):
+            continue
+
+        year1 = rate_percent(row[y1_col] if y1_col < len(row) else 0)
+        year2 = rate_percent(row[y2_col] if y2_col < len(row) else 0)
+        year3 = rate_percent(row[y3_col] if y3_col < len(row) else 0)
+        year4 = rate_percent(row[y4_col] if y4_col >= 0 and y4_col < len(row) else 0)
+        if year1 == 0 and year2 == 0 and year3 == 0 and year4 == 0:
+            continue
+
+        parsed.append(
+            {
+                "company": company,
+                "product": product,
+                "year1": year1,
+                "year2": year2,
+                "year3": year3,
+                "year4": year4,
+                "total": year1 + year2 + year3 + year4,
+                "source": sheet_name,
+            }
+        )
+
+    return parsed
+
+
 def parse_nonlife_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, Any]]:
     header_idx = -1
     for idx, row in enumerate(rows):
@@ -549,6 +798,10 @@ def parse_workbook(file_bytes: bytes) -> list[dict[str, Any]]:
     for ws in workbook.worksheets:
         values = worksheet_rows(ws)
         parsed_sheet = parse_life_sheet(values, ws.title)
+        if not parsed_sheet:
+            parsed_sheet.extend(parse_life_commission_rate_sheet(values, ws.title))
+        if not parsed_sheet:
+            parsed_sheet.extend(parse_life_company_detail_sheet(values, ws.title))
         parsed_sheet.extend(parse_nonlife_sheet(values, ws.title))
         if not parsed_sheet:
             parsed_sheet.extend(parse_monthly_matrix_sheet(values, ws.title))
