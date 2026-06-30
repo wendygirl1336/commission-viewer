@@ -387,6 +387,21 @@ def rate_display_from_spec(row: list[Any], spec: Any) -> str:
     return format_percent_point(rate_value_from_spec(row, spec))
 
 
+def component_text(cell: Any) -> str:
+    value = cell_value(cell)
+    text = clean(value)
+    if value is None or value == "":
+        return ""
+    if isinstance(value, (int, float)):
+        number_text = f"{float(value):.10g}"
+        number_format = str(getattr(cell, "number_format", "") or "")
+        literals = "".join(re.findall(r'"([^"]+)"', number_format))
+        if literals:
+            return f"{number_text}{literals}"
+        return number_text
+    return text
+
+
 def build_product(sheet_name: str, parts: list[str]) -> str:
     parts = [part for part in parts if part]
     if not parts:
@@ -494,13 +509,13 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
     total_col = override.get("total", find_detail_total_col(rows, header_idx))
 
     company = company_from_sheet_name(sheet_name)
-    current_parts: dict[int, str] = {}
     parsed: list[dict[str, Any]] = []
     y1_col, y2_col, y3_col, y4_col = year_cols
 
     for row in rows[header_idx + len(header_rows) :]:
+        row_parts: dict[int, str] = {}
         for col in component_cols:
-            cell = clean(cell_value(row[col]) if col < len(row) else "")
+            cell = component_text(row[col]) if col < len(row) else ""
             compact_cell = compact(cell)
             if not cell:
                 continue
@@ -508,12 +523,12 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
                 continue
             if compact_cell in {"상품명", "상품구분", "구분", "납입기간", "납기"}:
                 continue
-            if re.fullmatch(r"[-+]?\d+(\.\d+)?", compact_cell):
-                continue
-            current_parts[col] = cell
+            row_parts[col] = cell
 
-        product = build_product(sheet_name, [current_parts.get(col, "") for col in component_cols])
+        product = build_product(sheet_name, [row_parts.get(col, "") for col in component_cols])
         if not product:
+            continue
+        if compact(product) in {"월납보험료", "보험료", "가입금액", "총환산월초(GAP)"}:
             continue
 
         year1 = rate_value_from_spec(row, year_specs[0])
@@ -944,7 +959,21 @@ def parse_generic_rate_sheet(rows: list[list[Any]], sheet_name: str) -> list[dic
 
 def worksheet_rows(ws: Any) -> list[list[Any]]:
     max_col = min(ws.max_column or 1, MAX_PARSE_COLS)
-    return [list(row) for row in ws.iter_rows(max_col=max_col)]
+    merged_lookup: dict[tuple[int, int], Any] = {}
+    for merged_range in getattr(ws, "merged_cells", ()).ranges:
+        if merged_range.min_col > max_col:
+            continue
+        top_left = ws.cell(merged_range.min_row, merged_range.min_col)
+        for row_idx in range(merged_range.min_row, merged_range.max_row + 1):
+            for col_idx in range(merged_range.min_col, min(merged_range.max_col, max_col) + 1):
+                if row_idx == merged_range.min_row and col_idx == merged_range.min_col:
+                    continue
+                merged_lookup[(row_idx, col_idx)] = top_left
+
+    rows: list[list[Any]] = []
+    for row in ws.iter_rows(max_col=max_col):
+        rows.append([merged_lookup.get((cell.row, cell.column), cell) for cell in row])
+    return rows
 
 
 def parse_workbook(file_bytes: bytes) -> list[dict[str, Any]]:
@@ -952,7 +981,7 @@ def parse_workbook(file_bytes: bytes) -> list[dict[str, Any]]:
         raise ValueError("업로드된 파일이 비어 있습니다.")
     if not file_bytes.startswith(b"PK"):
         raise ValueError(".xlsx, .xlsm 등 최신 엑셀 파일만 업로드해 주세요. 구형 .xls 파일은 지원하지 않습니다.")
-    workbook = load_workbook(BytesIO(file_bytes), data_only=True, read_only=True)
+    workbook = load_workbook(BytesIO(file_bytes), data_only=True, read_only=False)
     rows: list[dict[str, Any]] = []
     for ws in workbook.worksheets:
         values = worksheet_rows(ws)
