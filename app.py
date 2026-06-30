@@ -131,13 +131,19 @@ def parse_percent_display(value: Any) -> float | None:
 
 def normalize_rate_displays(row: dict[str, Any]) -> dict[str, Any]:
     item = dict(row)
-    total = 0.0
+    year_total = 0.0
     for key in ("year1", "year2", "year3", "year4"):
         display_value = parse_percent_display(item.get(f"{key}Display", ""))
         value = display_value if display_value is not None else num(item.get(key, 0))
         item[key] = value
-        total += value
+        year_total += value
         item[f"{key}Display"] = format_percent_point(value)
+    total_display_value = parse_percent_display(item.get("totalDisplay", ""))
+    if total_display_value is not None:
+        total = total_display_value
+    else:
+        saved_total = num(item.get("total", 0))
+        total = saved_total if saved_total != 0 else year_total
     item["total"] = total
     item["totalDisplay"] = format_percent_point(total)
     return item
@@ -364,6 +370,15 @@ def build_product(sheet_name: str, parts: list[str]) -> str:
 def find_detail_year_cols(rows: list[list[Any]], header_idx: int) -> tuple[int, int, int, int]:
     search_rows = rows[header_idx : min(len(rows), header_idx + 6)]
 
+    def direct_year_cols(year: int) -> list[int]:
+        matches: list[int] = []
+        for row in search_rows:
+            for col, cell in enumerate(row):
+                label = compact(cell_value(cell))
+                if label in {f"{year}차년", f"{year}차년도"}:
+                    matches.append(col)
+        return matches
+
     def matching_cols(year: int, require_total: bool) -> list[int]:
         matches: list[int] = []
         for row in search_rows:
@@ -388,10 +403,20 @@ def find_detail_year_cols(rows: list[list[Any]], header_idx: int) -> tuple[int, 
 
     cols: list[int] = []
     for year in [1, 2, 3, 4]:
+        direct = direct_year_cols(year)
         preferred = matching_cols(year, True)
         fallback = matching_cols(year, False)
-        cols.append((preferred or fallback or [-1])[-1])
+        cols.append(direct[0] if direct else (preferred or fallback or [-1])[-1])
     return tuple(cols)  # type: ignore[return-value]
+
+
+def find_detail_total_col(rows: list[list[Any]], header_idx: int) -> int:
+    for row in rows[header_idx : min(len(rows), header_idx + 6)]:
+        for col, cell in enumerate(row):
+            label = compact(cell_value(cell))
+            if "총수수료" in label:
+                return col
+    return -1
 
 
 def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, Any]]:
@@ -432,6 +457,7 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
     if not component_cols:
         component_cols = list(range(min(first_year_col, 4)))
     component_cols = sheet_component_cols(sheet_name, component_cols, first_year_col)
+    total_col = find_detail_total_col(rows, header_idx)
 
     company = company_from_sheet_name(sheet_name)
     current_parts: dict[int, str] = {}
@@ -458,9 +484,15 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
         year2 = rate_value_for(row, y2_col)
         year3 = rate_value_for(row, y3_col)
         year4 = rate_value_for(row, y4_col)
-        if year1 == 0 and year2 == 0 and year3 == 0 and year4 == 0:
+        total_from_sheet = rate_value_for(row, total_col)
+        has_any_rate_value = any(
+            rate_value_for(row, col) != 0
+            for col in range(first_year_col, min(len(row), first_year_col + 16))
+        )
+        if year1 == 0 and year2 == 0 and year3 == 0 and year4 == 0 and not has_any_rate_value:
             continue
 
+        total = total_from_sheet if total_col >= 0 and total_from_sheet != 0 else year1 + year2 + year3 + year4
         item = {
             "company": company,
             "product": product,
@@ -468,12 +500,12 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
             "year2": year2,
             "year3": year3,
             "year4": year4,
-            "total": year1 + year2 + year3 + year4,
+            "total": total,
             "source": sheet_name,
         }
         for key, col in (("year1", y1_col), ("year2", y2_col), ("year3", y3_col), ("year4", y4_col)):
             item[f"{key}Display"] = rate_display_for(row, col)
-        item["totalDisplay"] = format_percent_point(item["total"])
+        item["totalDisplay"] = rate_display_for(row, total_col) if total_col >= 0 else format_percent_point(item["total"])
         parsed.append(item)
 
     return parsed
@@ -505,6 +537,8 @@ def parse_life_commission_rate_sheet(rows: list[list[Any]], sheet_name: str) -> 
     y1_col, y2_col, y3_col, y4_col = find_commission_rate_year_cols(rows, header_idx)
     if min(y1_col, y2_col, y3_col) < 0:
         return []
+    total_col = find_detail_total_col(rows, header_idx)
+    first_year_col = min(col for col in (y1_col, y2_col, y3_col) if col >= 0)
 
     company = company_from_sheet_name(sheet_name)
     current_parts: dict[int, str] = {}
@@ -525,9 +559,15 @@ def parse_life_commission_rate_sheet(rows: list[list[Any]], sheet_name: str) -> 
         year2 = rate_value_for(row, y2_col)
         year3 = rate_value_for(row, y3_col)
         year4 = rate_value_for(row, y4_col)
-        if year1 == 0 and year2 == 0 and year3 == 0 and year4 == 0:
+        total_from_sheet = rate_value_for(row, total_col)
+        has_any_rate_value = any(
+            rate_value_for(row, col) != 0
+            for col in range(first_year_col, min(len(row), first_year_col + 16))
+        )
+        if year1 == 0 and year2 == 0 and year3 == 0 and year4 == 0 and not has_any_rate_value:
             continue
 
+        total = total_from_sheet if total_col >= 0 and total_from_sheet != 0 else year1 + year2 + year3 + year4
         item = {
             "company": company,
             "product": product,
@@ -535,12 +575,12 @@ def parse_life_commission_rate_sheet(rows: list[list[Any]], sheet_name: str) -> 
             "year2": year2,
             "year3": year3,
             "year4": year4,
-            "total": year1 + year2 + year3 + year4,
+            "total": total,
             "source": sheet_name,
         }
         for key, col in (("year1", y1_col), ("year2", y2_col), ("year3", y3_col), ("year4", y4_col)):
             item[f"{key}Display"] = rate_display_for(row, col)
-        item["totalDisplay"] = format_percent_point(item["total"])
+        item["totalDisplay"] = rate_display_for(row, total_col) if total_col >= 0 else format_percent_point(item["total"])
         parsed.append(item)
 
     return parsed
