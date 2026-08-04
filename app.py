@@ -371,6 +371,8 @@ def detail_sheet_override(sheet_name: str) -> dict[str, Any]:
         return {"years": [20, 26, 32, -1], "total": 33, "components": [0, 1, 2, 3, 4]}
     if "\uad50\ubcf4\uc0dd\uba85" in name:
         return {"years": [13, 20, 26, -1], "total": 27, "components": [0, 1, 2, 3]}
+    if "\ud478\ubcf8\ud604\ub300" in name:
+        return {"years": [9, 12, 14, -1], "total": 15, "components": [0, 1, 2, 3]}
     return {}
 
 
@@ -521,7 +523,7 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
                 continue
             if compact_cell in {"-", "\u2013", "\u2014"}:
                 continue
-            if compact_cell in {"상품명", "상품구분", "구분", "납입기간", "납기"}:
+            if compact_cell in {"상품명", "상품구분", "구분", "납입기간", "납기", "상품가입형태", "보험기간", "환산율"}:
                 continue
             row_parts[col] = cell
 
