@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import socket
+import struct
 import time
 from email import policy
 from email.parser import BytesParser
@@ -140,9 +141,10 @@ def format_percent_point(value: Any) -> str:
 
 def format_amount(value: Any) -> str:
     amount = num(value)
-    if abs(amount) < 0.5:
+    if abs(amount) < 0.0000001:
         return "0"
-    return f"{amount:,.0f}"
+    text = f"{amount:,.4f}".rstrip("0").rstrip(".")
+    return text or "0"
 
 
 def parse_percent_display(value: Any) -> float | None:
@@ -753,7 +755,7 @@ def parse_nonlife_amount_sheet(rows: list[list[Any]], sheet_name: str) -> list[d
         labels = [compact(cell_value(cell)) for cell in row]
         has_product = any("상품" in label or "담보" in label for label in labels)
         has_next_month = any("익월" in label for label in labels)
-        has_second_year = any(("2차" in label or "2차년도" in label) and ("합산" in label or "금액" in label) for label in labels)
+        has_second_year = any("2차" in label or "2차년도" in label or "13회" in label for label in labels)
         has_total = any("총수수료" in label or "총수수료액" in label or "총수수료금액" in label for label in labels)
         if has_product and has_next_month and (has_second_year or has_total):
             header_idx = idx
@@ -775,20 +777,34 @@ def parse_nonlife_amount_sheet(rows: list[list[Any]], sheet_name: str) -> list[d
     next_month_col = find_label(["익월"])
     second_year_col = -1
     for col, label in enumerate(labels):
-        if ("2차" in label or "2차년도" in label or "2차년" in label) and ("합산" in label or "금액" in label or "수수료" in label):
+        if "2차" in label or "2차년도" in label or "2차년" in label or label == "13회":
             second_year_col = col
             break
     total_col = find_label(["총수수료", "총수수료액", "총수수료금액", "합계"])
     if product_col < 0 or next_month_col < 0 or second_year_col < 0:
         return []
-    if company_col < 0:
-        company_col = 0
+
+    sub_labels = [compact(cell_value(cell)) for cell in rows[header_idx + 1]] if header_idx + 1 < len(rows) else []
+    detail_cols: list[int] = []
+    for col in range(product_col + 1, next_month_col):
+        label = labels[col] if col < len(labels) else ""
+        sub_label = sub_labels[col] if col < len(sub_labels) else ""
+        merged_label = label or sub_label
+        if not merged_label or any(token in merged_label for token in ["수정율", "수정률", "환산율", "수수료", "익월"]):
+            continue
+        detail_cols.append(col)
+    second_year_cols = [
+        col
+        for col in range(second_year_col, total_col if total_col > second_year_col else len(header))
+        if col != next_month_col
+    ] or [second_year_col]
 
     parsed: list[dict[str, Any]] = []
     current_company = sheet_company(sheet_name)
     current_product = ""
+    current_details: dict[int, str] = {}
     for row in rows[header_idx + 1 :]:
-        company = clean(row_value(row, company_col)) if company_col < len(row) else ""
+        company = clean(row_value(row, company_col)) if 0 <= company_col < len(row) else ""
         product = clean(row_value(row, product_col)) if product_col < len(row) else ""
         if company and compact(company) not in {"보험사", "회사", "제휴사"}:
             current_company = company
@@ -796,12 +812,22 @@ def parse_nonlife_amount_sheet(rows: list[list[Any]], sheet_name: str) -> list[d
             current_product = product
         company = current_company
         product = product or current_product
+        details: list[str] = []
+        for col in detail_cols:
+            detail = clean(row_value(row, col)) if col < len(row) else ""
+            if detail and compact(detail) not in {"구분", "납입기간", "보험기간", "담보명", "담보"}:
+                current_details[col] = detail
+            else:
+                detail = current_details.get(col, "")
+            if detail:
+                details.append(detail)
+        product = build_product(sheet_name, [product, *details])
         if not company or not product:
             continue
         if any(token in compact(product) for token in ["합계", "총계"]) and len(compact(product)) <= 8:
             continue
         next_month = num(row_value(row, next_month_col))
-        second_year = num(row_value(row, second_year_col))
+        second_year = sum(num(row_value(row, col)) for col in second_year_cols if col < len(row))
         total = num(row_value(row, total_col)) if total_col >= 0 else next_month + second_year
         if next_month == 0 and second_year == 0 and total == 0:
             continue
@@ -1118,11 +1144,257 @@ def worksheet_rows(ws: Any) -> list[list[Any]]:
     return rows
 
 
+FREE_SECT = 0xFFFFFFFF
+END_OF_CHAIN = 0xFFFFFFFE
+
+
+def _u16(data: bytes, offset: int) -> int:
+    return struct.unpack_from("<H", data, offset)[0]
+
+
+def _u32(data: bytes, offset: int) -> int:
+    return struct.unpack_from("<I", data, offset)[0]
+
+
+def _sector(data: bytes, sector_size: int, sid: int) -> bytes:
+    start = 512 + sid * sector_size
+    return data[start : start + sector_size]
+
+
+def _chain(fat: list[int], start: int) -> list[int]:
+    result: list[int] = []
+    sid = start
+    seen: set[int] = set()
+    while sid not in (FREE_SECT, END_OF_CHAIN) and 0 <= sid < len(fat) and sid not in seen:
+        seen.add(sid)
+        result.append(sid)
+        sid = fat[sid]
+    return result
+
+
+def _read_stream(data: bytes, sector_size: int, fat: list[int], start: int, size: int) -> bytes:
+    payload = b"".join(_sector(data, sector_size, sid) for sid in _chain(fat, start))
+    return payload[:size]
+
+
+def _parse_cfb_streams(data: bytes) -> dict[str, bytes]:
+    sector_size = 1 << _u16(data, 30)
+    mini_sector_size = 1 << _u16(data, 32)
+    num_fat = _u32(data, 44)
+    first_dir = _u32(data, 48)
+    mini_cutoff = _u32(data, 56)
+    first_mini_fat = _u32(data, 60)
+    num_mini_fat = _u32(data, 64)
+    first_difat = _u32(data, 68)
+    num_difat = _u32(data, 72)
+
+    difat = [_u32(data, 76 + i * 4) for i in range(109)]
+    sid = first_difat
+    for _ in range(num_difat):
+        block = _sector(data, sector_size, sid)
+        entries = sector_size // 4 - 1
+        difat.extend(_u32(block, i * 4) for i in range(entries))
+        sid = _u32(block, entries * 4)
+    fat_sids = [item for item in difat if item not in (FREE_SECT, END_OF_CHAIN)][:num_fat]
+    fat: list[int] = []
+    for sid in fat_sids:
+        block = _sector(data, sector_size, sid)
+        fat.extend(_u32(block, i * 4) for i in range(sector_size // 4))
+
+    dir_stream = _read_stream(data, sector_size, fat, first_dir, 10**9)
+    entries: list[tuple[str, int, int, int]] = []
+    for offset in range(0, len(dir_stream), 128):
+        entry = dir_stream[offset : offset + 128]
+        if len(entry) < 128:
+            break
+        name_len = _u16(entry, 64)
+        if name_len < 2:
+            continue
+        name = entry[: name_len - 2].decode("utf-16le", errors="ignore")
+        entry_type = entry[66]
+        start = _u32(entry, 116)
+        size = struct.unpack_from("<Q", entry, 120)[0]
+        entries.append((name, entry_type, start, size))
+
+    root = next((entry for entry in entries if entry[1] == 5), None)
+    mini_stream = _read_stream(data, sector_size, fat, root[2], root[3]) if root else b""
+    mini_fat: list[int] = []
+    if first_mini_fat not in (FREE_SECT, END_OF_CHAIN):
+        for sid in _chain(fat, first_mini_fat)[:num_mini_fat]:
+            block = _sector(data, sector_size, sid)
+            mini_fat.extend(_u32(block, i * 4) for i in range(sector_size // 4))
+
+    def read_mini(start: int, size: int) -> bytes:
+        chunks: list[bytes] = []
+        sid = start
+        seen: set[int] = set()
+        while sid not in (FREE_SECT, END_OF_CHAIN) and 0 <= sid < len(mini_fat) and sid not in seen:
+            seen.add(sid)
+            begin = sid * mini_sector_size
+            chunks.append(mini_stream[begin : begin + mini_sector_size])
+            sid = mini_fat[sid]
+        return b"".join(chunks)[:size]
+
+    streams: dict[str, bytes] = {}
+    for name, entry_type, start, size in entries:
+        if entry_type != 2:
+            continue
+        if size < mini_cutoff and mini_stream and mini_fat:
+            streams[name] = read_mini(start, size)
+        else:
+            streams[name] = _read_stream(data, sector_size, fat, start, size)
+    return streams
+
+
+def _biff_records(stream: bytes, start: int = 0):
+    pos = start
+    while pos + 4 <= len(stream):
+        code, length = struct.unpack_from("<HH", stream, pos)
+        pos += 4
+        payload = stream[pos : pos + length]
+        pos += length
+        yield code, payload, pos
+
+
+def _decode_short_biff_string(payload: bytes, offset: int, encoding: str) -> str:
+    length = payload[offset]
+    flags = payload[offset + 1]
+    offset += 2
+    is_wide = bool(flags & 1)
+    raw_len = length * (2 if is_wide else 1)
+    raw = payload[offset : offset + raw_len]
+    return raw.decode("utf-16le" if is_wide else encoding, errors="ignore")
+
+
+def _decode_sst_string(buf: bytes, offset: int, encoding: str) -> tuple[str, int]:
+    length = _u16(buf, offset)
+    flags = buf[offset + 2]
+    offset += 3
+    rich_count = _u16(buf, offset) if flags & 0x08 else 0
+    if flags & 0x08:
+        offset += 2
+    ext_len = _u32(buf, offset) if flags & 0x04 else 0
+    if flags & 0x04:
+        offset += 4
+    is_wide = bool(flags & 0x01)
+    raw_len = length * (2 if is_wide else 1)
+    raw = buf[offset : offset + raw_len]
+    offset += raw_len + rich_count * 4 + ext_len
+    return raw.decode("utf-16le" if is_wide else encoding, errors="ignore"), offset
+
+
+def _rk_value(raw: int) -> float:
+    divide_100 = bool(raw & 1)
+    is_int = bool(raw & 2)
+    value_raw = raw & 0xFFFFFFFC
+    if is_int:
+        if value_raw & 0x80000000:
+            value_raw -= 0x100000000
+        value: float = value_raw >> 2
+    else:
+        value = struct.unpack("<d", struct.pack("<Q", value_raw << 32))[0]
+    return value / 100 if divide_100 else value
+
+
+def parse_xls_rows_without_xlrd(file_bytes: bytes) -> list[tuple[str, list[list[Any]]]]:
+    streams = _parse_cfb_streams(file_bytes)
+    workbook_stream = streams.get("Workbook") or streams.get("Book")
+    if not workbook_stream:
+        raise ValueError(".xls 통합 문서 데이터를 찾지 못했습니다.")
+
+    bounds: list[tuple[str, int]] = []
+    sst: list[str] = []
+    encoding = "cp949"
+    records = list(_biff_records(workbook_stream))
+    for idx, (code, payload, _pos) in enumerate(records):
+        if code == 0x0042 and len(payload) >= 2:
+            codepage = _u16(payload, 0)
+            encoding = "cp949" if codepage in (949, 0x8000) else "latin1"
+        elif code == 0x0085 and len(payload) >= 8:
+            bounds.append((_decode_short_biff_string(payload, 6, encoding), _u32(payload, 0)))
+        elif code == 0x00FC and len(payload) >= 8:
+            chunks = [payload]
+            next_idx = idx + 1
+            while next_idx < len(records) and records[next_idx][0] == 0x003C:
+                chunks.append(records[next_idx][1])
+                next_idx += 1
+            buf = b"".join(chunks)
+            total = _u32(buf, 4)
+            offset = 8
+            for _ in range(total):
+                if offset >= len(buf):
+                    break
+                try:
+                    text, offset = _decode_sst_string(buf, offset, encoding)
+                except Exception:
+                    break
+                sst.append(text)
+
+    result: list[tuple[str, list[list[Any]]]] = []
+    for sheet_index, (sheet_name, start) in enumerate(bounds):
+        end = bounds[sheet_index + 1][1] if sheet_index + 1 < len(bounds) else len(workbook_stream)
+        cells: dict[int, dict[int, Any]] = {}
+        merges: list[tuple[int, int, int, int]] = []
+        for code, payload, _pos in _biff_records(workbook_stream[start:end]):
+            if code == 0x00FD and len(payload) >= 10:
+                row, col = _u16(payload, 0), _u16(payload, 2)
+                sst_idx = _u32(payload, 6)
+                value: Any = sst[sst_idx] if sst_idx < len(sst) else ""
+            elif code == 0x0204 and len(payload) >= 8:
+                row, col = _u16(payload, 0), _u16(payload, 2)
+                value = _decode_short_biff_string(payload, 6, encoding)
+            elif code == 0x0203 and len(payload) >= 14:
+                row, col = _u16(payload, 0), _u16(payload, 2)
+                value = struct.unpack_from("<d", payload, 6)[0]
+            elif code == 0x0006 and len(payload) >= 14:
+                row, col = _u16(payload, 0), _u16(payload, 2)
+                value = "" if payload[6:8] == b"\xff\xff" else struct.unpack_from("<d", payload, 6)[0]
+            elif code == 0x027E and len(payload) >= 10:
+                row, col = _u16(payload, 0), _u16(payload, 2)
+                value = _rk_value(_u32(payload, 6))
+            elif code == 0x00BD and len(payload) >= 6:
+                row, first_col, last_col = _u16(payload, 0), _u16(payload, 2), _u16(payload, len(payload) - 2)
+                offset = 4
+                for col in range(first_col, last_col + 1):
+                    if offset + 6 <= len(payload):
+                        cells.setdefault(row, {})[col] = _rk_value(_u32(payload, offset + 2))
+                    offset += 6
+                continue
+            elif code == 0x00E5 and len(payload) >= 2:
+                count = _u16(payload, 0)
+                offset = 2
+                for _ in range(count):
+                    if offset + 8 <= len(payload):
+                        merges.append((_u16(payload, offset), _u16(payload, offset + 2), _u16(payload, offset + 4), _u16(payload, offset + 6)))
+                    offset += 8
+                continue
+            else:
+                continue
+            cells.setdefault(row, {})[col] = value
+
+        for first_row, last_row, first_col, last_col in merges:
+            value = cells.get(first_row, {}).get(first_col, "")
+            if value in ("", None):
+                continue
+            for row in range(first_row, last_row + 1):
+                for col in range(first_col, last_col + 1):
+                    cells.setdefault(row, {}).setdefault(col, value)
+
+        max_row = max(cells.keys(), default=-1)
+        max_col = max((max(row_cells.keys()) for row_cells in cells.values() if row_cells), default=-1)
+        rows = [[cells.get(row, {}).get(col, "") for col in range(max_col + 1)] for row in range(max_row + 1)]
+        result.append((sheet_name, rows))
+    return result
+
+
 def parse_xls_rows(file_bytes: bytes) -> list[tuple[str, list[list[Any]]]]:
     try:
         import xlrd  # type: ignore[import-not-found]
     except ImportError as exc:
-        raise ValueError(".xls 손해보험 파일을 읽으려면 xlrd 라이브러리가 필요합니다. 배포 환경을 다시 빌드해 주세요.") from exc
+        try:
+            return parse_xls_rows_without_xlrd(file_bytes)
+        except Exception as fallback_exc:
+            raise ValueError(".xls 손해보험 파일을 읽지 못했습니다. 파일을 다시 저장한 뒤 업로드해 주세요.") from fallback_exc
 
     workbook = xlrd.open_workbook(file_contents=file_bytes)
     result: list[tuple[str, list[list[Any]]]] = []
