@@ -59,6 +59,14 @@ def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     item["insuranceType"] = item.get("insuranceType") or "life"
     item["metricMode"] = item.get("metricMode") or "percent"
     saved_total = saved_num(item.get("total", 0))
+    if item["insuranceType"] == "nonlife" and item["metricMode"] == "amount":
+        for key in ("year1", "year2", "year3", "year4"):
+            item[key] *= 100
+        saved_total *= 100
+        item["metricMode"] = "percent"
+    if item["insuranceType"] == "nonlife":
+        item["total"] = saved_total if saved_total else item["year1"] + item["year2"] + item["year3"] + item["year4"]
+        return item
     item["total"] = saved_total if item["metricMode"] == "amount" and saved_total else item["year1"] + item["year2"] + item["year3"] + item["year4"]
     return item
 
@@ -139,6 +147,13 @@ def format_percent_point(value: Any) -> str:
     return f"{text}%"
 
 
+def format_percent_point_fixed(value: Any) -> str:
+    amount = num(value)
+    if abs(amount) < 0.05:
+        return "0%"
+    return f"{amount:.1f}%"
+
+
 def format_amount(value: Any) -> str:
     amount = num(value)
     if abs(amount) < 0.0000001:
@@ -161,6 +176,18 @@ def normalize_rate_displays(row: dict[str, Any]) -> dict[str, Any]:
     item = dict(row)
     item["insuranceType"] = item.get("insuranceType") or "life"
     item["metricMode"] = item.get("metricMode") or "percent"
+    if item["insuranceType"] == "nonlife":
+        item["metricMode"] = "percent"
+        year_total = 0.0
+        for key in ("year1", "year2", "year3", "year4"):
+            value = num(item.get(key, 0))
+            item[key] = value
+            year_total += value
+            item[f"{key}Display"] = format_percent_point_fixed(value)
+        saved_total = num(item.get("total", 0))
+        item["total"] = saved_total if saved_total else year_total
+        item["totalDisplay"] = format_percent_point_fixed(item["total"])
+        return item
     if item["metricMode"] == "amount":
         year_total = 0.0
         for key in ("year1", "year2", "year3", "year4"):
@@ -826,9 +853,9 @@ def parse_nonlife_amount_sheet(rows: list[list[Any]], sheet_name: str) -> list[d
             continue
         if any(token in compact(product) for token in ["합계", "총계"]) and len(compact(product)) <= 8:
             continue
-        next_month = num(row_value(row, next_month_col))
-        second_year = sum(num(row_value(row, col)) for col in second_year_cols if col < len(row))
-        total = num(row_value(row, total_col)) if total_col >= 0 else next_month + second_year
+        next_month = num(row_value(row, next_month_col)) * 100
+        second_year = sum(num(row_value(row, col)) for col in second_year_cols if col < len(row)) * 100
+        total = (num(row_value(row, total_col)) * 100) if total_col >= 0 else next_month + second_year
         if next_month == 0 and second_year == 0 and total == 0:
             continue
         item = {
@@ -841,13 +868,13 @@ def parse_nonlife_amount_sheet(rows: list[list[Any]], sheet_name: str) -> list[d
             "total": total if total else next_month + second_year,
             "source": sheet_name,
             "insuranceType": "nonlife",
-            "metricMode": "amount",
+            "metricMode": "percent",
         }
-        item["year1Display"] = format_amount(item["year1"])
-        item["year2Display"] = format_amount(item["year2"])
-        item["year3Display"] = ""
-        item["year4Display"] = ""
-        item["totalDisplay"] = format_amount(item["total"])
+        item["year1Display"] = format_percent_point_fixed(item["year1"])
+        item["year2Display"] = format_percent_point_fixed(item["year2"])
+        item["year3Display"] = "0%"
+        item["year4Display"] = "0%"
+        item["totalDisplay"] = format_percent_point_fixed(item["total"])
         parsed.append(item)
     return parsed
 

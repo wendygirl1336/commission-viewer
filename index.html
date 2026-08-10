@@ -894,7 +894,7 @@
       </button>
       <button class="mode-button" type="button" data-mode="nonlife">
         <strong>손해보험</strong>
-        <span>익월, 2차년도 합산금액, 총수수료</span>
+        <span>익월, 2차년도 합산, 총수수료</span>
       </button>
     </nav>
 
@@ -1251,7 +1251,7 @@
       insuranceTypeInput.value = state.currentType;
       fileInput.accept = state.currentType === "nonlife" ? ".xls,.xlsx,.xlsm" : ".xlsx,.xlsm,.xltx,.xltm";
       year1Head.textContent = state.currentType === "nonlife" ? "익월" : "1차년";
-      year2Head.textContent = state.currentType === "nonlife" ? "2차년도 합산금액" : "2차년";
+      year2Head.textContent = state.currentType === "nonlife" ? "2차년도 합산" : "2차년";
       year3Head.textContent = "3차년";
       year4Head.textContent = "4차년";
       rebuildFilters(currentRows());
