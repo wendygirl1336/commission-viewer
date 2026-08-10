@@ -55,7 +55,10 @@ def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     item["year2"] = saved_num(item.get("year2", 0))
     item["year3"] = saved_num(item.get("year3", 0))
     item["year4"] = saved_num(item.get("year4", 0))
-    item["total"] = item["year1"] + item["year2"] + item["year3"] + item["year4"]
+    item["insuranceType"] = item.get("insuranceType") or "life"
+    item["metricMode"] = item.get("metricMode") or "percent"
+    saved_total = saved_num(item.get("total", 0))
+    item["total"] = saved_total if item["metricMode"] == "amount" and saved_total else item["year1"] + item["year2"] + item["year3"] + item["year4"]
     return item
 
 
@@ -81,10 +84,18 @@ def save_upload(data: dict[str, Any]) -> None:
 
 
 def merge_uploaded_rows(existing_rows: list[dict[str, Any]], new_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    new_sources = {str(row.get("source", "")) for row in new_rows if str(row.get("source", ""))}
+    new_sources = {
+        (str(row.get("insuranceType", "life")), str(row.get("source", "")))
+        for row in new_rows
+        if str(row.get("source", ""))
+    }
     if not new_sources:
         return existing_rows + new_rows
-    kept_rows = [row for row in existing_rows if str(row.get("source", "")) not in new_sources]
+    kept_rows = [
+        row
+        for row in existing_rows
+        if (str(row.get("insuranceType", "life")), str(row.get("source", ""))) not in new_sources
+    ]
     return kept_rows + new_rows
 
 
@@ -127,6 +138,13 @@ def format_percent_point(value: Any) -> str:
     return f"{text}%"
 
 
+def format_amount(value: Any) -> str:
+    amount = num(value)
+    if abs(amount) < 0.5:
+        return "0"
+    return f"{amount:,.0f}"
+
+
 def parse_percent_display(value: Any) -> float | None:
     display = clean(value)
     if not display.endswith("%"):
@@ -139,6 +157,19 @@ def parse_percent_display(value: Any) -> float | None:
 
 def normalize_rate_displays(row: dict[str, Any]) -> dict[str, Any]:
     item = dict(row)
+    item["insuranceType"] = item.get("insuranceType") or "life"
+    item["metricMode"] = item.get("metricMode") or "percent"
+    if item["metricMode"] == "amount":
+        year_total = 0.0
+        for key in ("year1", "year2", "year3", "year4"):
+            value = num(item.get(key, 0))
+            item[key] = value
+            year_total += value
+            item[f"{key}Display"] = format_amount(value)
+        saved_total = num(item.get("total", 0))
+        item["total"] = saved_total if saved_total else year_total
+        item["totalDisplay"] = format_amount(item["total"])
+        return item
     year_total = 0.0
     for key in ("year1", "year2", "year3", "year4"):
         display_value = parse_percent_display(item.get(f"{key}Display", ""))
@@ -716,6 +747,85 @@ def parse_nonlife_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str
     return result
 
 
+def parse_nonlife_amount_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, Any]]:
+    header_idx = -1
+    for idx, row in enumerate(rows[:80]):
+        labels = [compact(cell_value(cell)) for cell in row]
+        has_product = any("상품" in label or "담보" in label for label in labels)
+        has_next_month = any("익월" in label for label in labels)
+        has_second_year = any(("2차" in label or "2차년도" in label) and ("합산" in label or "금액" in label) for label in labels)
+        has_total = any("총수수료" in label or "총수수료액" in label or "총수수료금액" in label for label in labels)
+        if has_product and has_next_month and (has_second_year or has_total):
+            header_idx = idx
+            break
+    if header_idx < 0:
+        return []
+
+    header = rows[header_idx]
+    labels = [compact(cell_value(cell)) for cell in header]
+
+    def find_label(candidates: list[str], fallback: int = -1) -> int:
+        for col, label in enumerate(labels):
+            if any(candidate in label for candidate in candidates):
+                return col
+        return fallback
+
+    company_col = find_label(["보험사", "회사", "제휴사"])
+    product_col = find_label(["상품명", "상품", "담보명", "담보"])
+    next_month_col = find_label(["익월"])
+    second_year_col = -1
+    for col, label in enumerate(labels):
+        if ("2차" in label or "2차년도" in label or "2차년" in label) and ("합산" in label or "금액" in label or "수수료" in label):
+            second_year_col = col
+            break
+    total_col = find_label(["총수수료", "총수수료액", "총수수료금액", "합계"])
+    if product_col < 0 or next_month_col < 0 or second_year_col < 0:
+        return []
+    if company_col < 0:
+        company_col = 0
+
+    parsed: list[dict[str, Any]] = []
+    current_company = sheet_company(sheet_name)
+    current_product = ""
+    for row in rows[header_idx + 1 :]:
+        company = clean(row_value(row, company_col)) if company_col < len(row) else ""
+        product = clean(row_value(row, product_col)) if product_col < len(row) else ""
+        if company and compact(company) not in {"보험사", "회사", "제휴사"}:
+            current_company = company
+        if product and compact(product) not in {"상품", "상품명", "담보", "담보명"}:
+            current_product = product
+        company = current_company
+        product = product or current_product
+        if not company or not product:
+            continue
+        if any(token in compact(product) for token in ["합계", "총계"]) and len(compact(product)) <= 8:
+            continue
+        next_month = num(row_value(row, next_month_col))
+        second_year = num(row_value(row, second_year_col))
+        total = num(row_value(row, total_col)) if total_col >= 0 else next_month + second_year
+        if next_month == 0 and second_year == 0 and total == 0:
+            continue
+        item = {
+            "company": company,
+            "product": product,
+            "year1": next_month,
+            "year2": second_year,
+            "year3": 0.0,
+            "year4": 0.0,
+            "total": total if total else next_month + second_year,
+            "source": sheet_name,
+            "insuranceType": "nonlife",
+            "metricMode": "amount",
+        }
+        item["year1Display"] = format_amount(item["year1"])
+        item["year2Display"] = format_amount(item["year2"])
+        item["year3Display"] = ""
+        item["year4Display"] = ""
+        item["totalDisplay"] = format_amount(item["total"])
+        parsed.append(item)
+    return parsed
+
+
 def parse_monthly_matrix_sheet(rows: list[list[Any]], sheet_name: str) -> list[dict[str, Any]]:
     month_header_idx = -1
     month_cols: list[tuple[int, str]] = []
@@ -1008,25 +1118,57 @@ def worksheet_rows(ws: Any) -> list[list[Any]]:
     return rows
 
 
-def parse_workbook(file_bytes: bytes) -> list[dict[str, Any]]:
+def parse_xls_rows(file_bytes: bytes) -> list[tuple[str, list[list[Any]]]]:
+    try:
+        import xlrd  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise ValueError(".xls 손해보험 파일을 읽으려면 xlrd 라이브러리가 필요합니다. 배포 환경을 다시 빌드해 주세요.") from exc
+
+    workbook = xlrd.open_workbook(file_contents=file_bytes)
+    result: list[tuple[str, list[list[Any]]]] = []
+    for sheet in workbook.sheets():
+        rows: list[list[Any]] = []
+        for row_idx in range(sheet.nrows):
+            rows.append([sheet.cell_value(row_idx, col_idx) for col_idx in range(sheet.ncols)])
+        result.append((sheet.name, rows))
+    return result
+
+
+def parse_workbook(file_bytes: bytes, insurance_type: str = "life") -> list[dict[str, Any]]:
     if not file_bytes:
         raise ValueError("업로드된 파일이 비어 있습니다.")
+    insurance_type = "nonlife" if insurance_type == "nonlife" else "life"
+    if file_bytes.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        if insurance_type != "nonlife":
+            raise ValueError(".xls 파일은 손해보험 업로드에서만 지원합니다.")
+        rows: list[dict[str, Any]] = []
+        for sheet_name, values in parse_xls_rows(file_bytes):
+            rows.extend(parse_nonlife_amount_sheet(values, sheet_name))
+        return [normalize_rate_displays(row) for row in rows if row["company"] and row["product"]]
     if not file_bytes.startswith(b"PK"):
-        raise ValueError(".xlsx, .xlsm 등 최신 엑셀 파일만 업로드해 주세요. 구형 .xls 파일은 지원하지 않습니다.")
+        raise ValueError(".xlsx, .xlsm 또는 손해보험 .xls 파일만 업로드해 주세요.")
     workbook = load_workbook(BytesIO(file_bytes), data_only=True, read_only=False)
     rows: list[dict[str, Any]] = []
     for ws in workbook.worksheets:
         values = worksheet_rows(ws)
-        parsed_sheet = parse_life_sheet(values, ws.title)
-        if not parsed_sheet:
-            parsed_sheet.extend(parse_life_commission_rate_sheet(values, ws.title))
-        if not parsed_sheet:
-            parsed_sheet.extend(parse_life_company_detail_sheet(values, ws.title))
-        parsed_sheet.extend(parse_nonlife_sheet(values, ws.title))
-        if not parsed_sheet:
-            parsed_sheet.extend(parse_monthly_matrix_sheet(values, ws.title))
-        if not parsed_sheet:
-            parsed_sheet.extend(parse_generic_rate_sheet(values, ws.title))
+        if insurance_type == "nonlife":
+            parsed_sheet = parse_nonlife_amount_sheet(values, ws.title)
+            if not parsed_sheet:
+                parsed_sheet.extend(parse_nonlife_sheet(values, ws.title))
+        else:
+            parsed_sheet = parse_life_sheet(values, ws.title)
+            if not parsed_sheet:
+                parsed_sheet.extend(parse_life_commission_rate_sheet(values, ws.title))
+            if not parsed_sheet:
+                parsed_sheet.extend(parse_life_company_detail_sheet(values, ws.title))
+            parsed_sheet.extend(parse_nonlife_sheet(values, ws.title))
+            if not parsed_sheet:
+                parsed_sheet.extend(parse_monthly_matrix_sheet(values, ws.title))
+            if not parsed_sheet:
+                parsed_sheet.extend(parse_generic_rate_sheet(values, ws.title))
+            for item in parsed_sheet:
+                item.setdefault("insuranceType", "life")
+                item.setdefault("metricMode", "percent")
         rows.extend(parsed_sheet)
     return [normalize_rate_displays(row) for row in rows if row["company"] and row["product"]]
 
@@ -1257,7 +1399,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not hmac.compare_digest(fields.get("csrf", ""), str(session.get("csrf", ""))):
                     self.redirect_home()
                     return
-                rows = parse_workbook(file_bytes)
+                rows = parse_workbook(file_bytes, fields.get("insuranceType", "life"))
                 existing_rows = CURRENT_UPLOAD.get("rows", [])
                 combined_rows = merge_uploaded_rows(existing_rows, rows)
                 CURRENT_UPLOAD = {
@@ -1330,8 +1472,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 body, content_type = self.read_upload_body()
-                file_bytes, _fields = parse_upload(body, content_type)
-                rows = parse_workbook(file_bytes)
+                file_bytes, fields = parse_upload(body, content_type)
+                rows = parse_workbook(file_bytes, fields.get("insuranceType", "life"))
                 message = "" if rows else "인식 가능한 수수료 표를 찾지 못했습니다."
                 existing_rows = CURRENT_UPLOAD.get("rows", [])
                 combined_rows = merge_uploaded_rows(existing_rows, rows)

@@ -167,6 +167,48 @@
       height: clamp(40px, 8vh, 90px);
     }
 
+    .mode-picker {
+      width: min(1180px, calc(100% - 48px));
+      margin: 0 auto 16px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .mode-button {
+      min-height: 74px;
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--white);
+      color: var(--ink);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      box-shadow: 0 8px 22px rgba(16, 24, 40, 0.06);
+    }
+
+    .mode-button strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 18px;
+    }
+
+    .mode-button span {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .mode-button.active {
+      border-color: var(--point);
+      box-shadow: 0 0 0 3px rgba(218, 173, 65, 0.18);
+    }
+
+    body.nonlife-view .life-only {
+      display: none;
+    }
+
     .content {
       width: min(1180px, calc(100% - 48px));
       margin: 0 auto 48px;
@@ -793,6 +835,11 @@
         width: calc(100% - 24px);
       }
 
+      .mode-picker {
+        width: calc(100% - 24px);
+        grid-template-columns: 1fr;
+      }
+
       .brand-logo {
         width: 202px;
       }
@@ -840,6 +887,17 @@
 
     <div class="hero-space"></div>
 
+    <nav class="mode-picker" aria-label="보험 종류 선택">
+      <button class="mode-button active" type="button" data-mode="life">
+        <strong>생명보험</strong>
+        <span>회사별, 상품별, 1~4차년도 수수료율</span>
+      </button>
+      <button class="mode-button" type="button" data-mode="nonlife">
+        <strong>손해보험</strong>
+        <span>익월, 2차년도 합산금액, 총수수료</span>
+      </button>
+    </nav>
+
     <main class="content">
       <section class="panel" aria-label="수수료 조회">
         <div class="control-bar">
@@ -851,6 +909,7 @@
           <form id="uploadForm" class="upload-form" action="/upload" method="post" enctype="multipart/form-data">
             <label class="upload-label" for="fileInput">엑셀 업로드</label>
             <input id="csrfToken" name="csrf" type="hidden">
+            <input id="insuranceTypeInput" name="insuranceType" type="hidden" value="life">
             <input id="fileInput" name="file" type="file" accept=".xlsx,.xlsm,.xltx,.xltm">
           </form>
           <div class="delete-scope">
@@ -872,10 +931,10 @@
               <tr>
                 <th><button class="sort-button active asc" type="button" data-sort="company" aria-label="회사 정렬">회사<span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button class="sort-button" type="button" data-sort="product" aria-label="상품 정렬">상품<span class="sort-indicator" aria-hidden="true"></span></button></th>
-                <th class="num">1차년</th>
-                <th class="num">2차년</th>
-                <th class="num">3차년</th>
-                <th class="num">4차년</th>
+                <th id="year1Head" class="num">1차년</th>
+                <th id="year2Head" class="num">2차년</th>
+                <th id="year3Head" class="num life-only">3차년</th>
+                <th id="year4Head" class="num life-only">4차년</th>
                 <th class="num"><button class="sort-button" type="button" data-sort="total" aria-label="총수수료 정렬">총수수료<span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th>구분</th>
                 <th class="admin-col">관리</th>
@@ -997,11 +1056,13 @@
   </div>
 
   <script>
-    const state = { rows: [], filtered: [], fileName: "", authenticated: false, admin: false, csrf: "", sortKey: "company", sortDir: "asc", uploading: false };
+    const state = { rows: [], filtered: [], fileName: "", authenticated: false, admin: false, csrf: "", sortKey: "company", sortDir: "asc", uploading: false, currentType: "life" };
     let nextRowId = 1;
     let activeCalcRow = null;
 
     const fileInput = document.getElementById("fileInput");
+    const insuranceTypeInput = document.getElementById("insuranceTypeInput");
+    const modeButtons = [...document.querySelectorAll(".mode-button[data-mode]")];
     const clearUploadButton = document.getElementById("clearUploadButton");
     const deleteScopeSelect = document.getElementById("deleteScopeSelect");
     const csrfToken = document.getElementById("csrfToken");
@@ -1009,6 +1070,10 @@
     const companyFilter = document.getElementById("companyFilter");
     const sourceFilter = document.getElementById("sourceFilter");
     const tableBody = document.getElementById("tableBody");
+    const year1Head = document.getElementById("year1Head");
+    const year2Head = document.getElementById("year2Head");
+    const year3Head = document.getElementById("year3Head");
+    const year4Head = document.getElementById("year4Head");
     const sortButtons = [...document.querySelectorAll(".sort-button[data-sort]")];
     const emptyState = document.getElementById("emptyState");
     const notice = document.getElementById("notice");
@@ -1050,7 +1115,13 @@
       return num.toLocaleString("ko-KR", { maximumFractionDigits: 0 });
     };
 
-    const formatCell = (row, key) => normalizePercentDisplay(row[`${key}Display`] || formatPercentRate(row[key]));
+    const formatAmountCell = (value) => number(value).toLocaleString("ko-KR", { maximumFractionDigits: 0 });
+    const formatCell = (row, key) => {
+      if (row.metricMode === "amount") {
+        return row[`${key}Display`] || formatAmountCell(row[key]);
+      }
+      return normalizePercentDisplay(row[`${key}Display`] || formatPercentRate(row[key]));
+    };
     const formatMoney = (value) => Math.round(number(value)).toLocaleString("ko-KR");
 
     const formatPercentRate = (value) => {
@@ -1165,6 +1236,28 @@
       openModal(uploadResultModal);
     }
 
+    function rowType(row) {
+      return row.insuranceType || "life";
+    }
+
+    function currentRows() {
+      return state.rows.filter((row) => rowType(row) === state.currentType);
+    }
+
+    function setInsuranceMode(mode) {
+      state.currentType = mode === "nonlife" ? "nonlife" : "life";
+      document.body.classList.toggle("nonlife-view", state.currentType === "nonlife");
+      modeButtons.forEach((button) => button.classList.toggle("active", button.dataset.mode === state.currentType));
+      insuranceTypeInput.value = state.currentType;
+      fileInput.accept = state.currentType === "nonlife" ? ".xls,.xlsx,.xlsm" : ".xlsx,.xlsm,.xltx,.xltm";
+      year1Head.textContent = state.currentType === "nonlife" ? "익월" : "1차년";
+      year2Head.textContent = state.currentType === "nonlife" ? "2차년도 합산금액" : "2차년";
+      year3Head.textContent = "3차년";
+      year4Head.textContent = "4차년";
+      rebuildFilters(currentRows());
+      applyFilters();
+    }
+
     function rebuildFilters(rows) {
       const currentCompany = companyFilter.value;
       const currentSource = sourceFilter.value;
@@ -1181,7 +1274,7 @@
       const query = searchInput.value.trim().toLowerCase();
       const company = companyFilter.value;
       const source = sourceFilter.value;
-      state.filtered = state.rows.filter((row) => {
+      state.filtered = currentRows().filter((row) => {
         const matchesQuery = !query || `${row.company} ${row.product}`.toLowerCase().includes(query);
         const matchesCompany = !company || row.company === company;
         const matchesSource = !source || row.source === source;
@@ -1229,7 +1322,7 @@
       }
       if (!state.authenticated) {
         emptyState.innerHTML = "<div><strong>로그인이 필요합니다</strong>안내받은 계정으로 로그인하면 수수료 표가 표시됩니다.</div>";
-      } else if (state.rows.length) {
+      } else if (currentRows().length) {
         emptyState.innerHTML = "<div><strong>검색 결과가 없습니다</strong>검색어 또는 필터를 다시 선택해 주세요.</div>";
       } else {
         emptyState.innerHTML = "<div><strong>표시할 데이터가 없습니다</strong>관리자 계정으로 로그인해 엑셀 파일을 업로드해 주세요.</div>";
@@ -1243,8 +1336,8 @@
           <td class="product">${escapeHtml(row.product)}</td>
           <td class="num">${escapeHtml(formatCell(row, "year1"))}</td>
           <td class="num">${escapeHtml(formatCell(row, "year2"))}</td>
-          <td class="num">${escapeHtml(formatCell(row, "year3"))}</td>
-          <td class="num">${escapeHtml(formatCell(row, "year4"))}</td>
+          <td class="num life-only">${escapeHtml(formatCell(row, "year3"))}</td>
+          <td class="num life-only">${escapeHtml(formatCell(row, "year4"))}</td>
           <td class="num"><strong>${escapeHtml(formatCell(row, "total"))}</strong></td>
           <td class="sheet">${escapeHtml(row.source)}</td>
           <td class="admin-col">
@@ -1260,7 +1353,7 @@
 
       updateEmptyState();
       renderSortButtons();
-      if (state.fileName && state.rows.length) {
+      if (state.fileName && currentRows().length) {
         statusText.innerHTML = `<strong>${state.filtered.length.toLocaleString("ko-KR")}</strong>건 표시 중${state.admin ? " · 관리자 수정 가능" : ""}`;
       }
     }
@@ -1291,8 +1384,9 @@
         const year2 = number(row.year2);
         const year3 = number(row.year3);
         const year4 = number(row.year4);
-        const total = year1 + year2 + year3 + year4;
-        const normalized = { ...row, year1, year2, year3, year4, total, id: nextRowId++ };
+        const metricMode = row.metricMode || "percent";
+        const total = metricMode === "amount" && number(row.total) ? number(row.total) : year1 + year2 + year3 + year4;
+        const normalized = { ...row, insuranceType: row.insuranceType || "life", metricMode, year1, year2, year3, year4, total, id: nextRowId++ };
         if (!normalized.totalDisplay && hasPercentDisplay(normalized)) {
           normalized.totalDisplay = formatPercentRate(total);
         }
@@ -1300,10 +1394,10 @@
       });
       state.fileName = payload.fileName || "업로드된 엑셀 파일";
       fileName.textContent = state.fileName;
-      rebuildFilters(state.rows);
+      rebuildFilters(currentRows());
       applyFilters();
 
-      if (state.rows.length) {
+      if (currentRows().length) {
         notice.style.display = "none";
       } else {
         notice.textContent = payload.message || "인식 가능한 수수료 표를 찾지 못했습니다. 생보 예시표 또는 손보 원장 형식의 헤더가 포함된 파일인지 확인해 주세요.";
@@ -1349,6 +1443,7 @@
       statusText.innerHTML = '<strong>업로드 중</strong> · 엑셀 파일을 서버에 보내고 있습니다.';
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("insuranceType", state.currentType);
       fetch("/api/upload", {
         method: "POST",
         headers: { "X-CSRF-Token": state.csrf },
@@ -1362,7 +1457,7 @@
             ok: true,
             file: file.name,
             addedRows: payload.addedRows || 0,
-            totalRows: state.rows.length,
+            totalRows: currentRows().length,
             message: "엑셀 파일을 불러왔습니다."
           });
           notice.textContent = `${file.name} 데이터가 기존 목록에 추가되었습니다.`;
@@ -1377,7 +1472,7 @@
             ok: false,
             file: file.name,
             addedRows: 0,
-            totalRows: state.rows.length,
+            totalRows: currentRows().length,
             message: `파일을 읽지 못했습니다. ${error.message}`
           });
         })
@@ -1548,6 +1643,8 @@
       row.year3 = number(document.getElementById("editYear3").value);
       row.year4 = number(document.getElementById("editYear4").value);
       row.total = row.year1 + row.year2 + row.year3 + row.year4;
+      row.metricMode = row.metricMode || (state.currentType === "nonlife" ? "amount" : "percent");
+      row.insuranceType = row.insuranceType || state.currentType;
       delete row.year1Display;
       delete row.year2Display;
       delete row.year3Display;
@@ -1636,6 +1733,9 @@
     searchInput.addEventListener("input", applyFilters);
     companyFilter.addEventListener("change", applyFilters);
     sourceFilter.addEventListener("change", applyFilters);
+    modeButtons.forEach((button) => {
+      button.addEventListener("click", () => setInsuranceMode(button.dataset.mode));
+    });
     sortButtons.forEach((button) => {
       button.addEventListener("click", () => {
         const key = button.dataset.sort || "company";
@@ -1650,6 +1750,7 @@
     });
 
     window.addEventListener("load", () => {
+      setInsuranceMode("life");
       loadInitialUpload();
       loadSession().catch(() => setAuthMode(false, false));
       render();
