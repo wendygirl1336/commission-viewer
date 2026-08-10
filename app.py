@@ -80,6 +80,14 @@ def save_upload(data: dict[str, Any]) -> None:
     DATA_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 
+def merge_uploaded_rows(existing_rows: list[dict[str, Any]], new_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    new_sources = {str(row.get("source", "")) for row in new_rows if str(row.get("source", ""))}
+    if not new_sources:
+        return existing_rows + new_rows
+    kept_rows = [row for row in existing_rows if str(row.get("source", "")) not in new_sources]
+    return kept_rows + new_rows
+
+
 def clean(value: Any) -> str:
     return re.sub(r"\s+", " ", "" if value is None else str(value)).strip()
 
@@ -1251,7 +1259,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 rows = parse_workbook(file_bytes)
                 existing_rows = CURRENT_UPLOAD.get("rows", [])
-                combined_rows = existing_rows + rows
+                combined_rows = merge_uploaded_rows(existing_rows, rows)
                 CURRENT_UPLOAD = {
                     "rows": combined_rows,
                     "fileName": "업로드된 엑셀 파일",
@@ -1326,7 +1334,7 @@ class Handler(BaseHTTPRequestHandler):
                 rows = parse_workbook(file_bytes)
                 message = "" if rows else "인식 가능한 수수료 표를 찾지 못했습니다."
                 existing_rows = CURRENT_UPLOAD.get("rows", [])
-                combined_rows = existing_rows + rows
+                combined_rows = merge_uploaded_rows(existing_rows, rows)
                 CURRENT_UPLOAD = {
                     "rows": combined_rows,
                     "fileName": "업로드된 엑셀 파일",
