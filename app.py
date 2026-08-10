@@ -78,7 +78,11 @@ def load_saved_upload() -> dict[str, Any]:
         data = json.loads(DATA_FILE.read_text(encoding="utf-8"))
         if isinstance(data, dict) and isinstance(data.get("rows"), list):
             return {
-                "rows": [normalize_rate_displays(normalize_row(row)) for row in data.get("rows", []) if isinstance(row, dict)],
+                "rows": [
+                    normalize_rate_displays(normalize_row(row))
+                    for row in data.get("rows", [])
+                    if isinstance(row, dict) and not row_is_header_noise(row)
+                ],
                 "fileName": data.get("fileName", ""),
                 "message": data.get("message", ""),
                 "error": data.get("error", ""),
@@ -93,10 +97,17 @@ def save_upload(data: dict[str, Any]) -> None:
 
 
 def merge_uploaded_rows(existing_rows: list[dict[str, Any]], new_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    existing_rows = [row for row in existing_rows if not row_is_header_noise(row)]
+    new_rows = [row for row in new_rows if not row_is_header_noise(row)]
     new_sources = {
         (str(row.get("insuranceType", "life")), str(row.get("source", "")))
         for row in new_rows
         if str(row.get("source", ""))
+    }
+    new_companies = {
+        (str(row.get("insuranceType", "life")), str(row.get("company", "")))
+        for row in new_rows
+        if str(row.get("company", ""))
     }
     if not new_sources:
         return existing_rows + new_rows
@@ -104,6 +115,7 @@ def merge_uploaded_rows(existing_rows: list[dict[str, Any]], new_rows: list[dict
         row
         for row in existing_rows
         if (str(row.get("insuranceType", "life")), str(row.get("source", ""))) not in new_sources
+        and (str(row.get("insuranceType", "life")), str(row.get("company", ""))) not in new_companies
     ]
     return kept_rows + new_rows
 
@@ -215,6 +227,29 @@ def normalize_rate_displays(row: dict[str, Any]) -> dict[str, Any]:
     item["total"] = total
     item["totalDisplay"] = format_percent_point(total)
     return item
+
+
+def row_is_header_noise(row: dict[str, Any]) -> bool:
+    product = compact(row.get("product", ""))
+    if not product:
+        return True
+    header_products = {
+        "보종",
+        "상품명",
+        "상품구분",
+        "구분",
+        "납기",
+        "납기(년)",
+        "납입기간",
+        "나이/보험료",
+        "월납보험료",
+        "보험료",
+        "가입금액",
+        "총환산월초(GAP)",
+    }
+    if product in header_products:
+        return True
+    return product.startswith("보종/") or product.startswith("상품명/")
 
 
 CURRENT_UPLOAD: dict[str, Any] = load_saved_upload()
@@ -441,6 +476,10 @@ def detail_sheet_override(sheet_name: str) -> dict[str, Any]:
         return {"years": [13, 20, 26, -1], "total": 27, "components": [0, 1, 2, 3]}
     if "\ud478\ubcf8\ud604\ub300" in name:
         return {"years": [9, 12, 14, -1], "total": 15, "components": [0, 1, 2, 3]}
+    if "ABL\uc0dd\uba85" in name:
+        return {"years": [4, (5, 6), 7, 8], "total": 9, "components": [0, 1, 2, 3]}
+    if "IM\ub77c\uc774\ud504" in name or "iM\ub77c\uc774\ud504" in name:
+        return {"years": [5, 12, 13, 14], "total": 15, "components": [0, 1, 2, 3]}
     return {}
 
 
@@ -493,13 +532,45 @@ def component_text(cell: Any) -> str:
 
 
 def build_product(sheet_name: str, parts: list[str]) -> str:
-    parts = [part for part in parts if part]
+    deduped: list[str] = []
+    for part in parts:
+        if part and (not deduped or compact(deduped[-1]) != compact(part)):
+            deduped.append(part)
+    parts = deduped
     if not parts:
         return ""
     company = company_from_sheet_name(sheet_name)
     if "흥국생명" in company and len(parts) >= 3:
         return f"{parts[0]}({parts[1]} {parts[2]})"
     return " / ".join(parts)
+
+
+def is_header_component_value(value: str) -> bool:
+    label = compact(value)
+    if not label:
+        return True
+    if label in {"-", "\u2013", "\u2014"}:
+        return True
+    return label in {
+        "보종",
+        "상품명",
+        "상품구분",
+        "구분",
+        "납입기간",
+        "납기",
+        "납기(년)",
+        "나이/보험료",
+        "가입금액구간",
+        "가입금액",
+        "가입연령",
+        "만기",
+        "적용기준",
+        "상품가입형태",
+        "상품유형",
+        "보험기간",
+        "주피연령",
+        "환산율",
+    }
 
 
 def find_detail_year_cols(rows: list[list[Any]], header_idx: int) -> tuple[int, int, int, int]:
@@ -611,9 +682,7 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
             compact_cell = compact(cell)
             if not cell:
                 continue
-            if compact_cell in {"-", "\u2013", "\u2014"}:
-                continue
-            if compact_cell in {"상품명", "상품구분", "구분", "납입기간", "납기", "상품가입형태", "보험기간", "환산율"}:
+            if is_header_component_value(compact_cell) or compact_cell == "환산율":
                 continue
             row_parts[col] = cell
 
@@ -621,6 +690,8 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
         if not product:
             continue
         if compact(product) in {"월납보험료", "보험료", "가입금액", "총환산월초(GAP)"}:
+            continue
+        if all(is_header_component_value(part) for part in product.split(" / ")):
             continue
 
         year1 = rate_value_from_spec(row, year_specs[0])
@@ -690,12 +761,14 @@ def parse_life_commission_rate_sheet(rows: list[list[Any]], sheet_name: str) -> 
     for row in rows[header_idx + 1 :]:
         for col_idx, _label in component_cols:
             cell = clean(cell_value(row[col_idx]) if col_idx < len(row) else "")
-            if cell:
+            if cell and not is_header_component_value(cell):
                 current_parts[col_idx] = cell
 
         parts = [current_parts.get(col_idx, "") for col_idx, _label in component_cols]
         product = build_product(sheet_name, parts)
         if not product or "상품명" in compact(product) or "CommissionRate" in compact(product):
+            continue
+        if all(is_header_component_value(part) for part in product.split(" / ")):
             continue
 
         year1 = rate_value_for(row, y1_col)
@@ -1443,7 +1516,7 @@ def parse_workbook(file_bytes: bytes, insurance_type: str = "life") -> list[dict
         rows: list[dict[str, Any]] = []
         for sheet_name, values in parse_xls_rows(file_bytes):
             rows.extend(parse_nonlife_amount_sheet(values, sheet_name))
-        return [normalize_rate_displays(row) for row in rows if row["company"] and row["product"]]
+        return [normalize_rate_displays(row) for row in rows if row["company"] and row["product"] and not row_is_header_noise(row)]
     if not file_bytes.startswith(b"PK"):
         raise ValueError(".xlsx, .xlsm 또는 손해보험 .xls 파일만 업로드해 주세요.")
     workbook = load_workbook(BytesIO(file_bytes), data_only=True, read_only=False)
@@ -1469,7 +1542,7 @@ def parse_workbook(file_bytes: bytes, insurance_type: str = "life") -> list[dict
                 item.setdefault("insuranceType", "life")
                 item.setdefault("metricMode", "percent")
         rows.extend(parsed_sheet)
-    return [normalize_rate_displays(row) for row in rows if row["company"] and row["product"]]
+    return [normalize_rate_displays(row) for row in rows if row["company"] and row["product"] and not row_is_header_noise(row)]
 
 
 def parse_upload(body: bytes, content_type: str) -> tuple[bytes, dict[str, str]]:
