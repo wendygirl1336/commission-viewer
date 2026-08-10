@@ -52,6 +52,9 @@ def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
             return 0.0
 
     item = dict(row)
+    item["company"] = clean(item.get("company", ""))
+    item["product"] = clean(item.get("product", ""))
+    item["source"] = clean(item.get("source", ""))
     item["year1"] = saved_num(item.get("year1", 0))
     item["year2"] = saved_num(item.get("year2", 0))
     item["year3"] = saved_num(item.get("year3", 0))

@@ -1129,6 +1129,15 @@
     const hasPercentDisplay = (row) =>
       ["year1Display", "year2Display", "year3Display", "year4Display"].some((key) => String(row[key] || "").includes("%"));
 
+    function normalizeDataRow(row) {
+      return {
+        ...row,
+        company: text(row.company),
+        product: text(row.product),
+        source: text(row.source)
+      };
+    }
+
     function parseAmount(value) {
       const raw = text(value).replace(/,/g, "").replace(/\s+/g, "");
       if (!raw) return 0;
@@ -1252,8 +1261,8 @@
     function rebuildFilters(rows) {
       const currentCompany = companyFilter.value;
       const currentSource = sourceFilter.value;
-      const companies = [...new Set(rows.map((row) => row.company))].sort((a, b) => a.localeCompare(b, "ko"));
-      const sources = [...new Set(rows.map((row) => row.source))].sort((a, b) => a.localeCompare(b, "ko"));
+      const companies = [...new Set(rows.map((row) => text(row.company)).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
+      const sources = [...new Set(rows.map((row) => text(row.source)).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
       companyFilter.innerHTML = '<option value="">전체 회사</option>' + companies.map((value) => `<option>${escapeHtml(value)}</option>`).join("");
       sourceFilter.innerHTML = '<option value="">전체 구분</option>' + sources.map((value) => `<option>${escapeHtml(value)}</option>`).join("");
       deleteScopeSelect.innerHTML = '<option value="">전체 삭제</option>' + sources.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)} 삭제</option>`).join("");
@@ -1370,7 +1379,9 @@
       }
 
       nextRowId = 1;
-      state.rows = payload.rows.map((row) => {
+      const payloadRows = Array.isArray(payload.rows) ? payload.rows : [];
+      state.rows = payloadRows.map((rawRow) => {
+        const row = normalizeDataRow(rawRow);
         const year1 = number(row.year1);
         const year2 = number(row.year2);
         const year3 = number(row.year3);
@@ -1382,7 +1393,7 @@
           normalized.totalDisplay = formatPercentRate(total);
         }
         return normalized;
-      });
+      }).filter((row) => row.company && row.product);
       state.fileName = payload.fileName || "업로드된 엑셀 파일";
       fileName.textContent = state.fileName;
       rebuildFilters(currentRows());
@@ -1455,7 +1466,6 @@
           notice.style.display = "block";
         })
         .catch((error) => {
-          clearCurrentData("");
           notice.textContent = `파일을 읽는 중 오류가 발생했습니다. ${error.message}`;
           notice.style.display = "block";
           statusText.textContent = "업로드 실패";
@@ -1471,6 +1481,7 @@
           state.uploading = false;
           panel.classList.remove("loading");
           fileInput.value = "";
+          rebuildFilters(currentRows());
           applyFilters();
         });
     }
@@ -1537,7 +1548,7 @@
       if (!row) return;
       if (!confirm(`삭제하시겠습니까?\n${row.company} / ${row.product}`)) return;
       state.rows = state.rows.filter((item) => item.id !== rowId);
-      rebuildFilters(state.rows);
+      rebuildFilters(currentRows());
       applyFilters();
     }
 
@@ -1641,7 +1652,7 @@
       delete row.year3Display;
       delete row.year4Display;
       delete row.totalDisplay;
-      rebuildFilters(state.rows);
+      rebuildFilters(currentRows());
       applyFilters();
       closeModal(editModal);
     });
