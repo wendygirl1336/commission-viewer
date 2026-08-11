@@ -1545,7 +1545,23 @@ def parse_workbook(file_bytes: bytes, insurance_type: str = "life") -> list[dict
                 item.setdefault("insuranceType", "life")
                 item.setdefault("metricMode", "percent")
         rows.extend(parsed_sheet)
-    return [normalize_rate_displays(row) for row in rows if row["company"] and row["product"] and not row_is_header_noise(row)]
+    parsed_rows = [normalize_rate_displays(row) for row in rows if row["company"] and row["product"] and not row_is_header_noise(row)]
+    validate_parsed_rows(parsed_rows, insurance_type)
+    return parsed_rows
+
+
+def validate_parsed_rows(rows: list[dict[str, Any]], insurance_type: str) -> None:
+    if insurance_type != "life":
+        return
+    dongyang_rows = [row for row in rows if "동양생명" in str(row.get("company", ""))]
+    if not dongyang_rows:
+        return
+    has_dongyang_rate = any(
+        any(num(row.get(key, 0)) != 0 for key in ("year1", "year2", "year3", "year4", "total"))
+        for row in dongyang_rows
+    )
+    if not has_dongyang_rate:
+        raise ValueError("동양생명 수수료율이 모두 0%로 인식되었습니다. 최신 파서로 다시 업로드해 주세요.")
 
 
 def parse_upload(body: bytes, content_type: str) -> tuple[bytes, dict[str, str]]:
