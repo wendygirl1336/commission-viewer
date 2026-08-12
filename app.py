@@ -84,7 +84,7 @@ def load_saved_upload() -> dict[str, Any]:
                 "rows": [
                     normalize_rate_displays(normalize_row(row))
                     for row in data.get("rows", [])
-                    if isinstance(row, dict) and not row_is_header_noise(row)
+                    if isinstance(row, dict) and not row_is_header_noise(row) and not row_is_bad_saved_row(row)
                 ],
                 "fileName": data.get("fileName", ""),
                 "message": data.get("message", ""),
@@ -100,7 +100,7 @@ def save_upload(data: dict[str, Any]) -> None:
 
 
 def merge_uploaded_rows(existing_rows: list[dict[str, Any]], new_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    existing_rows = [row for row in existing_rows if not row_is_header_noise(row)]
+    existing_rows = [row for row in existing_rows if not row_is_header_noise(row) and not row_is_bad_saved_row(row)]
     new_rows = [row for row in new_rows if not row_is_header_noise(row)]
     new_sources = {
         (str(row.get("insuranceType", "life")), str(row.get("source", "")))
@@ -121,6 +121,14 @@ def merge_uploaded_rows(existing_rows: list[dict[str, Any]], new_rows: list[dict
         and (str(row.get("insuranceType", "life")), str(row.get("company", ""))) not in new_companies
     ]
     return kept_rows + new_rows
+
+
+def row_is_bad_saved_row(row: dict[str, Any]) -> bool:
+    if str(row.get("insuranceType", "life")) != "life":
+        return False
+    if "동양생명" not in str(row.get("company", "")):
+        return False
+    return all(num(row.get(key, 0)) == 0 for key in ("year1", "year2", "year3", "year4", "total"))
 
 
 def clean(value: Any) -> str:
