@@ -23,7 +23,7 @@ from openpyxl import load_workbook
 ROOT = Path(__file__).resolve().parent
 DATA_FILE = ROOT / "current_upload.json"
 ADMIN_ID = "admin"
-ADMIN_PASSWORD = "1234"
+ADMIN_PASSWORD = "0716"
 VIEWER_ID = "company"
 VIEWER_PASSWORD = "1234"
 ADMIN_LOGIN_IDS = {ADMIN_ID, "관리자"}
