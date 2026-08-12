@@ -252,6 +252,8 @@ def row_is_header_noise(row: dict[str, Any]) -> bool:
     }
     if product in header_products:
         return True
+    if "보장금액" in product and "보험료" in product:
+        return True
     return product.startswith("보종/") or product.startswith("상품명/")
 
 
@@ -454,6 +456,8 @@ def sheet_component_cols(sheet_name: str, component_cols: list[int], first_year_
     if "\uc0bc\uc131\uc0dd\uba85" in name:
         return [0, 1, 2]
     if "\ub3d9\uc591\uc0dd\uba85" in name:
+        if first_year_col <= 5:
+            return [0, 1, 2, 4]
         return [0, 1, 2, 3, 4, 5]
     overrides: dict[str, list[int]] = {
         "메트라이프": [0, 1, 2, 3],
@@ -497,6 +501,8 @@ def early_detail_sheet_override(sheet_name: str, year_cols: tuple[int, int, int,
         return {"years": [y1_col, y2_col, y3_col, y4_col], "total": total_col, "components": [0, 1, 2]}
     if "\ud55c\ud654\uc0dd\uba85" in name and total_col == 13:
         return {"years": [y1_col, y2_col, y3_col, y4_col], "total": total_col, "components": [0, 2, 3]}
+    if "\ub3d9\uc591\uc0dd\uba85" in name and total_col == 8:
+        return {"years": [y1_col, y2_col, y3_col, y4_col], "total": total_col, "components": [0, 1, 2, 4]}
     if "\ub3d9\uc591\uc0dd\uba85" in name and total_col == 15:
         return {"years": [y1_col, y2_col, y3_col, y4_col], "total": total_col, "components": [0, 1, 2, 3, 4, 5]}
     if "\uad50\ubcf4\uc0dd\uba85" in name and total_col == 7:
