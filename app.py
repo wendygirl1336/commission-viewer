@@ -22,6 +22,8 @@ from openpyxl import load_workbook
 
 ROOT = Path(__file__).resolve().parent
 DATA_FILE = ROOT / "current_upload.json"
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+UPLOAD_ROW_ID = 1
 ADMIN_ID = "admin"
 ADMIN_PASSWORD = "0716"
 VIEWER_ID = "company"
@@ -74,29 +76,94 @@ def normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
-def load_saved_upload() -> dict[str, Any]:
+def normalize_upload_data(data: Any) -> dict[str, Any]:
+    if isinstance(data, dict) and isinstance(data.get("rows"), list):
+        return {
+            "rows": [
+                normalize_rate_displays(normalize_row(row))
+                for row in data.get("rows", [])
+                if isinstance(row, dict) and not row_is_header_noise(row) and not row_is_bad_saved_row(row)
+            ],
+            "fileName": data.get("fileName", ""),
+            "message": data.get("message", ""),
+            "error": data.get("error", ""),
+        }
+    return empty_upload()
+
+
+def db_connect() -> Any:
+    try:
+        import psycopg  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError("DATABASE_URL이 설정되어 있지만 psycopg가 설치되지 않았습니다.") from exc
+    return psycopg.connect(DATABASE_URL, connect_timeout=10)
+
+
+def ensure_db_schema(conn: Any) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS commission_uploads (
+            id integer PRIMARY KEY,
+            data jsonb NOT NULL,
+            updated_at timestamptz NOT NULL DEFAULT now()
+        )
+        """
+    )
+
+
+def load_upload_from_db() -> dict[str, Any]:
+    with db_connect() as conn:
+        ensure_db_schema(conn)
+        row = conn.execute("SELECT data::text FROM commission_uploads WHERE id = %s", (UPLOAD_ROW_ID,)).fetchone()
+        if not row:
+            return empty_upload()
+        return normalize_upload_data(json.loads(row[0]))
+
+
+def save_upload_to_db(data: dict[str, Any]) -> None:
+    payload = json.dumps(data, ensure_ascii=False)
+    with db_connect() as conn:
+        ensure_db_schema(conn)
+        conn.execute(
+            """
+            INSERT INTO commission_uploads (id, data, updated_at)
+            VALUES (%s, %s::jsonb, now())
+            ON CONFLICT (id)
+            DO UPDATE SET data = EXCLUDED.data, updated_at = now()
+            """,
+            (UPLOAD_ROW_ID, payload),
+        )
+
+
+def load_upload_from_file() -> dict[str, Any]:
     if not DATA_FILE.exists():
         return empty_upload()
     try:
         data = json.loads(DATA_FILE.read_text(encoding="utf-8"))
-        if isinstance(data, dict) and isinstance(data.get("rows"), list):
-            return {
-                "rows": [
-                    normalize_rate_displays(normalize_row(row))
-                    for row in data.get("rows", [])
-                    if isinstance(row, dict) and not row_is_header_noise(row) and not row_is_bad_saved_row(row)
-                ],
-                "fileName": data.get("fileName", ""),
-                "message": data.get("message", ""),
-                "error": data.get("error", ""),
-            }
+        return normalize_upload_data(data)
     except Exception:
         pass
     return empty_upload()
 
 
-def save_upload(data: dict[str, Any]) -> None:
+def save_upload_to_file(data: dict[str, Any]) -> None:
     DATA_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def load_saved_upload() -> dict[str, Any]:
+    if DATABASE_URL:
+        try:
+            return load_upload_from_db()
+        except Exception as exc:
+            print(f"DB load failed, falling back to local file: {exc}")
+    return load_upload_from_file()
+
+
+def save_upload(data: dict[str, Any]) -> None:
+    if DATABASE_URL:
+        save_upload_to_db(data)
+        return
+    save_upload_to_file(data)
 
 
 def merge_uploaded_rows(existing_rows: list[dict[str, Any]], new_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
