@@ -126,9 +126,26 @@ def merge_uploaded_rows(existing_rows: list[dict[str, Any]], new_rows: list[dict
 def row_is_bad_saved_row(row: dict[str, Any]) -> bool:
     if str(row.get("insuranceType", "life")) != "life":
         return False
-    if "동양생명" not in str(row.get("company", "")):
-        return False
-    return all(num(row.get(key, 0)) == 0 for key in ("year1", "year2", "year3", "year4", "total"))
+    company = str(row.get("company", ""))
+    product = str(row.get("product", ""))
+    source = str(row.get("source", ""))
+    if "동양생명" in company and all(num(row.get(key, 0)) == 0 for key in ("year1", "year2", "year3", "year4", "total")):
+        return True
+    summary_tokens = (
+        "한국보험금융",
+        "총계",
+        "합계",
+        "본부_",
+        "채널_",
+        "직영부문",
+        "지점채널",
+        "코인스",
+    )
+    if any(token in product for token in summary_tokens):
+        return True
+    if source == "직영파트 MS":
+        return True
+    return False
 
 
 def clean(value: Any) -> str:
@@ -1550,7 +1567,6 @@ def parse_workbook(file_bytes: bytes, insurance_type: str = "life") -> list[dict
                 parsed_sheet.extend(parse_life_commission_rate_sheet(values, ws.title))
             if not parsed_sheet:
                 parsed_sheet.extend(parse_life_company_detail_sheet(values, ws.title))
-            parsed_sheet.extend(parse_nonlife_sheet(values, ws.title))
             if not parsed_sheet:
                 parsed_sheet.extend(parse_monthly_matrix_sheet(values, ws.title))
             if not parsed_sheet:
