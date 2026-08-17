@@ -524,6 +524,8 @@ def early_detail_sheet_override(sheet_name: str, year_cols: tuple[int, int, int,
         return {}
     if "\uc0bc\uc131\uc0dd\uba85" in name and total_col == 8:
         return {"years": [y1_col, y2_col, y3_col, y4_col], "total": total_col, "components": [0, 1, 2]}
+    if "\ud55c\ud654\uc0dd\uba85" in name and total_col == 9:
+        return {"years": [y1_col, y2_col, y3_col, y4_col], "total": total_col, "components": [0, 2, 3]}
     if "\ud55c\ud654\uc0dd\uba85" in name and total_col == 13:
         return {"years": [y1_col, y2_col, y3_col, y4_col], "total": total_col, "components": [0, 2, 3]}
     if "\ub3d9\uc591\uc0dd\uba85" in name and total_col == 8:
