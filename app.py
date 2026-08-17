@@ -515,28 +515,16 @@ def detail_sheet_override(sheet_name: str) -> dict[str, Any]:
     return {}
 
 
-def early_detail_sheet_override(sheet_name: str, year_cols: tuple[int, int, int, int], total_col: int) -> dict[str, Any]:
+def label_based_detail_override(sheet_name: str, year_cols: tuple[int, int, int, int], total_col: int) -> dict[str, Any]:
     name = company_from_sheet_name(sheet_name)
     y1_col, y2_col, y3_col, y4_col = year_cols
     if min(y1_col, y2_col, y3_col) < 0:
         return {}
-    if y1_col > 12:
+    if total_col < 0 or y1_col > 12:
         return {}
-    if "\uc0bc\uc131\uc0dd\uba85" in name and total_col == 8:
-        return {"years": [y1_col, y2_col, y3_col, y4_col], "total": total_col, "components": [0, 1, 2]}
-    if "\ud55c\ud654\uc0dd\uba85" in name and total_col == 9:
-        return {"years": [y1_col, y2_col, y3_col, y4_col], "total": total_col, "components": [0, 2, 3]}
-    if "\ud55c\ud654\uc0dd\uba85" in name and total_col == 13:
-        return {"years": [y1_col, y2_col, y3_col, y4_col], "total": total_col, "components": [0, 2, 3]}
-    if "\ub3d9\uc591\uc0dd\uba85" in name and total_col == 8:
-        return {"years": [y1_col, y2_col, y3_col, y4_col], "total": total_col, "components": [0, 1, 2, 4]}
-    if "\ub3d9\uc591\uc0dd\uba85" in name and total_col == 15:
-        return {"years": [y1_col, y2_col, y3_col, y4_col], "total": total_col, "components": [0, 1, 2, 3, 4, 5]}
-    if "\uad50\ubcf4\uc0dd\uba85" in name and total_col == 7:
-        return {"years": [y1_col, y2_col, y3_col, y4_col], "total": total_col, "components": [0, 1, 2, 3]}
-    if "\ud478\ubcf8\ud604\ub300" in name and total_col == 7:
-        return {"years": [y1_col, y2_col, y3_col, y4_col], "total": total_col, "components": [0, 1, 2, 3]}
-    return {}
+    if "ABL\uc0dd\uba85" in name and y3_col > y2_col + 1:
+        return {"years": [y1_col, (y2_col, y3_col - 1), y3_col, y4_col], "total": total_col, "components": [0, 1, 2, 3]}
+    return {"years": [y1_col, y2_col, y3_col, y4_col], "total": total_col}
 
 
 def rate_value_from_spec(row: list[Any], spec: Any) -> float:
@@ -690,7 +678,7 @@ def parse_life_company_detail_sheet(rows: list[list[Any]], sheet_name: str) -> l
         return []
 
     detected_total_col = find_detail_total_col(rows, header_idx)
-    override = early_detail_sheet_override(sheet_name, year_cols, detected_total_col) or override
+    override = label_based_detail_override(sheet_name, year_cols, detected_total_col) or override
     first_year_col = min(col for col in year_cols[:3] if col >= 0)
     header_rows = rows[header_idx : min(len(rows), header_idx + 6)]
     component_cols: list[int] = []
