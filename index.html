@@ -423,6 +423,27 @@
       white-space: nowrap;
     }
 
+    .year-heading {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: flex-end;
+      line-height: 1.15;
+    }
+
+    .year-range {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .table-disclaimer {
+      margin: 12px 4px 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
     .sort-button {
       display: inline-flex;
       align-items: center;
@@ -922,10 +943,10 @@
               <tr>
                 <th><button class="sort-button active asc" type="button" data-sort="company" aria-label="회사 정렬">회사<span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th><button class="sort-button" type="button" data-sort="product" aria-label="상품 정렬">상품<span class="sort-indicator" aria-hidden="true"></span></button></th>
-                <th id="year1Head" class="num">1차년</th>
-                <th id="year2Head" class="num">2차년</th>
-                <th id="year3Head" class="num life-only">3차년</th>
-                <th id="year4Head" class="num life-only">4차년</th>
+                <th id="year1Head" class="num"><span class="year-heading">1차년</span></th>
+                <th id="year2Head" class="num"><span class="year-heading">2차년<span class="year-range">13~24</span></span></th>
+                <th id="year3Head" class="num life-only"><span class="year-heading">3차년<span class="year-range">25~36</span></span></th>
+                <th id="year4Head" class="num life-only"><span class="year-heading">4차년<span class="year-range">37~48</span></span></th>
                 <th class="num"><button class="sort-button" type="button" data-sort="total" aria-label="총수수료 정렬">총수수료<span class="sort-indicator" aria-hidden="true"></span></button></th>
                 <th>구분</th>
                 <th class="admin-col">관리</th>
@@ -941,6 +962,7 @@
           </div>
         </div>
       </section>
+      <p class="table-disclaimer">*게시된 예시표는 예상이며, 원수사 변경에 따라 수시 변경될 수 있음을 알려드립니다.</p>
       <div id="notice" class="notice"></div>
     </main>
   </div>
@@ -1250,10 +1272,14 @@
       modeButtons.forEach((button) => button.classList.toggle("active", button.dataset.mode === state.currentType));
       insuranceTypeInput.value = state.currentType;
       fileInput.accept = state.currentType === "nonlife" ? ".xls,.xlsx,.xlsm" : ".xlsx,.xlsm,.xltx,.xltm";
-      year1Head.textContent = state.currentType === "nonlife" ? "익월" : "1차년";
-      year2Head.textContent = state.currentType === "nonlife" ? "2차년도 합산" : "2차년";
-      year3Head.textContent = "3차년";
-      year4Head.textContent = "4차년";
+      year1Head.innerHTML = state.currentType === "nonlife"
+        ? '<span class="year-heading">익월</span>'
+        : '<span class="year-heading">1차년</span>';
+      year2Head.innerHTML = state.currentType === "nonlife"
+        ? '<span class="year-heading">2차년도 합산</span>'
+        : '<span class="year-heading">2차년<span class="year-range">13~24</span></span>';
+      year3Head.innerHTML = '<span class="year-heading">3차년<span class="year-range">25~36</span></span>';
+      year4Head.innerHTML = '<span class="year-heading">4차년<span class="year-range">37~48</span></span>';
       rebuildFilters(currentRows());
       applyFilters();
     }
