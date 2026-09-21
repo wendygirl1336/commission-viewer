@@ -439,7 +439,7 @@
 
     .table-disclaimer {
       margin: 12px 4px 0;
-      color: var(--muted);
+      color: #c62828;
       font-size: 12px;
       line-height: 1.5;
     }
@@ -1276,7 +1276,7 @@
         ? '<span class="year-heading">익월</span>'
         : '<span class="year-heading">1차년</span>';
       year2Head.innerHTML = state.currentType === "nonlife"
-        ? '<span class="year-heading">2차년도 합산</span>'
+        ? '<span class="year-heading">2차년도 합산<span class="year-range">13~24</span></span>'
         : '<span class="year-heading">2차년<span class="year-range">13~24</span></span>';
       year3Head.innerHTML = '<span class="year-heading">3차년<span class="year-range">25~36</span></span>';
       year4Head.innerHTML = '<span class="year-heading">4차년<span class="year-range">37~48</span></span>';
